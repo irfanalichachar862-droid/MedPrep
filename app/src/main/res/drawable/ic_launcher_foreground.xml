@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Bold clinical shield centered inside 66dp safe zone (21..87) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,23 L78,32 V52 C78,67 67.5,79.5 54,85 C40.5,79.5 30,67 30,52 V32 Z" />
+    <!-- Crisp inner clinical medical cross -->
+    <path
+        android:fillColor="#0D6E6E"
+        android:pathData="M49.5,39 H58.5 V48.5 H68 V57.5 H58.5 V67 H49.5 V57.5 H40 V48.5 H49.5 Z" />
+    <!-- Subtle warm gold accent dot at top of shield -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M54,30.5 m-2.8,0 a2.8,2.8 0 1,0 5.6,0 a2.8,2.8 0 1,0 -5.6,0" />
+</vector>

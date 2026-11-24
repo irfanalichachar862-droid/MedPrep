@@ -1,0 +1,6 @@
+{
+  "name": "MedPrep",
+  "description": "Offline-capable medical MCQ exam prep with cloud sync, CSV question import, and in-app admin studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

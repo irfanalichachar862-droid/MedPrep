@@ -1,0 +1,309 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated learner profile and cumulative study telemetry.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the profile owner."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name shown on dashboard and profile."
+        },
+        "email": {
+          "type": "string",
+          "description": "Optional email address from Google Sign-In (owner-only PII)."
+        },
+        "contactEmail": {
+          "type": "string",
+          "description": "Optional secondary/contact email added by the student."
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "Optional mobile phone number added by the student."
+        },
+        "subscriptionPlan": {
+          "type": "string",
+          "enum": ["free", "basic", "advance"],
+          "description": "Selected student subscription plan tier."
+        },
+        "scheduleDays": {
+          "type": "integer",
+          "description": "Target number of days to complete syllabus study schedule (1 to 365)."
+        },
+        "targetExam": {
+          "type": "string",
+          "description": "Selected medical exam track (e.g., MDCAT, NUMS, ETEA)."
+        },
+        "dailyGoal": {
+          "type": "integer",
+          "description": "Target number of MCQs to practice per day (5 to 200)."
+        },
+        "totalAnswered": {
+          "type": "integer",
+          "description": "Lifetime count of MCQ attempts submitted."
+        },
+        "totalCorrect": {
+          "type": "integer",
+          "description": "Lifetime count of correctly answered MCQs."
+        },
+        "lastSyncedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last explicit offline sync (FieldValue.serverTimestamp())."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest profile update (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "targetExam",
+        "dailyGoal",
+        "totalAnswered",
+        "totalCorrect",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted role record granting administrative permissions to manage the shared MCQ bank.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "grantedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "email", "grantedBy", "createdAt"]
+    },
+    "McqQuestion": {
+      "title": "McqQuestion",
+      "description": "Medical multiple-choice question with four options, answer key, reason/explanation, optional YouTube video link, and publish workflow status.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "subject": {
+          "type": "string",
+          "enum": ["Biology", "Chemistry", "Physics", "English", "Logical Reasoning"]
+        },
+        "topic": { "type": "string" },
+        "stem": { "type": "string" },
+        "optionA": { "type": "string" },
+        "optionB": { "type": "string" },
+        "optionC": { "type": "string" },
+        "optionD": { "type": "string" },
+        "correctOption": { "type": "string", "enum": ["A", "B", "C", "D"] },
+        "explanation": { "type": "string", "description": "Reason explaining why the correct answer is right." },
+        "youtubeUrl": { "type": "string", "description": "Optional suggested YouTube video URL discussing this MCQ topic." },
+        "linkedPostId": { "type": "string", "description": "Optional StudyPost ID linking this MCQ directly to an interactive HTML topic explanation." },
+        "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
+        "status": { "type": "string", "enum": ["draft", "published"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "authorId", "subject", "topic", "stem",
+        "optionA", "optionB", "optionC", "optionD",
+        "correctOption", "explanation", "difficulty", "status",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "StudyPost": {
+      "title": "StudyPost",
+      "description": "Admin-published study post containing notes, interactive HTML topic explanation, external webpage link, and suggested YouTube lecture video.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "subject": { "type": "string" },
+        "topic": { "type": "string" },
+        "webUrl": { "type": "string" },
+        "youtubeUrl": { "type": "string" },
+        "htmlContent": { "type": "string", "description": "Optional Admin-uploaded interactive HTML document explaining this topic." },
+        "htmlFileName": { "type": "string", "description": "Optional original filename of the uploaded interactive HTML lesson." },
+        "courseId": { "type": "string", "description": "Optional CourseItem document ID linking this post/lesson to a specific course." },
+        "status": { "type": "string", "enum": ["draft", "published"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "authorId", "title", "body", "subject", "topic", "status", "createdAt", "updatedAt"
+      ]
+    },
+    "CourseItem": {
+      "title": "CourseItem",
+      "description": "Structured medical exam course authored by Admin containing syllabus outline, level, duration, external resources, and linked posts/MCQs.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "subject": { "type": "string" },
+        "instructor": { "type": "string" },
+        "durationLabel": { "type": "string" },
+        "level": { "type": "string", "enum": ["beginner", "intermediate", "advanced"] },
+        "syllabusOutline": { "type": "string" },
+        "youtubeUrl": { "type": "string" },
+        "webUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "published"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "authorId", "title", "description", "subject", "instructor",
+        "durationLabel", "level", "syllabusOutline", "status", "createdAt", "updatedAt"
+      ]
+    },
+    "AccessKey": {
+      "title": "AccessKey",
+      "description": "Special student login access key enforcing 1-user 1-device hardware binding.",
+      "type": "object",
+      "properties": {
+        "keyCode": { "type": "string" },
+        "label": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "revoked"] },
+        "assignedUserId": { "type": "string" },
+        "assignedEmail": { "type": "string" },
+        "boundDeviceId": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "activatedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "keyCode", "label", "status", "assignedUserId", "assignedEmail",
+        "boundDeviceId", "createdBy", "createdAt", "updatedAt"
+      ]
+    },
+    "QuestionAttempt": {
+      "title": "QuestionAttempt",
+      "description": "Per-user state for a specific MCQ including latest selected option, correctness, bookmark status, and attempt count.",
+      "type": "object",
+      "properties": {
+        "questionId": { "type": "string" },
+        "subject": { "type": "string" },
+        "selectedOption": { "type": "string", "enum": ["", "A", "B", "C", "D"] },
+        "correct": { "type": "boolean" },
+        "answered": { "type": "boolean" },
+        "bookmarked": { "type": "boolean" },
+        "attemptsCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "questionId", "subject", "selectedOption", "correct",
+        "answered", "bookmarked", "attemptsCount", "createdAt", "updatedAt"
+      ]
+    },
+    "ExamSession": {
+      "title": "ExamSession",
+      "description": "Completed practice or timed exam session summary for progress tracking.",
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["practice", "exam", "mistakes", "bookmarks"] },
+        "subjectFilter": { "type": "string" },
+        "totalQuestions": { "type": "integer" },
+        "correctCount": { "type": "integer" },
+        "durationSeconds": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "mode", "subjectFilter", "totalQuestions", "correctCount", "durationSeconds", "createdAt"
+      ]
+    },
+    "StudyNote": {
+      "title": "StudyNote",
+      "description": "Owner-scoped student study note or MCQ highlight.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "subject": { "type": "string" },
+        "questionId": { "type": "string" },
+        "highlightColor": { "type": "string", "enum": ["teal", "amber", "rose", "indigo", "emerald"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "content", "subject", "highlightColor", "createdAt", "updatedAt"]
+    },
+    "DifficultQuestionItem": {
+      "title": "DifficultQuestionItem",
+      "description": "Owner-scoped difficult exam question flagged or authored by the student.",
+      "type": "object",
+      "properties": {
+        "sourceQuestionId": { "type": "string" },
+        "subject": { "type": "string" },
+        "topic": { "type": "string" },
+        "stem": { "type": "string" },
+        "optionA": { "type": "string" },
+        "optionB": { "type": "string" },
+        "optionC": { "type": "string" },
+        "optionD": { "type": "string" },
+        "correctOption": { "type": "string", "enum": ["A", "B", "C", "D"] },
+        "explanation": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "subject", "topic", "stem", "optionA", "optionB", "optionC", "optionD",
+        "correctOption", "explanation", "createdAt", "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private learner profile, exam preferences, and aggregate study metrics."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Trusted administrator directory."
+    },
+    "/questions/{questionId}": {
+      "schema": { "$ref": "#/entities/McqQuestion" },
+      "description": "Shared 5-subject MCQ repository with clinical/conceptual reason and optional YouTube lecture URL."
+    },
+    "/posts/{postId}": {
+      "schema": { "$ref": "#/entities/StudyPost" },
+      "description": "Admin-uploaded study posts with webpage links, interactive HTML lessons, and suggested YouTube videos."
+    },
+    "/courses/{courseId}": {
+      "schema": { "$ref": "#/entities/CourseItem" },
+      "description": "Admin-managed structured courses with syllabus modules, linked study posts, and subject MCQ practice."
+    },
+    "/access_keys/{keyCode}": {
+      "schema": { "$ref": "#/entities/AccessKey" },
+      "description": "Admin-issued student access keys locked to 1 user and 1 device."
+    },
+    "/users/{userId}/attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/QuestionAttempt" },
+      "description": "Owner-scoped per-question answer history, mistake tracking, and bookmarks."
+    },
+    "/users/{userId}/exam_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/ExamSession" },
+      "description": "Owner-scoped completed practice and timed exam history."
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/StudyNote" },
+      "description": "Owner-scoped student highlights and study notes."
+    },
+    "/users/{userId}/difficult_questions/{itemId}": {
+      "schema": { "$ref": "#/entities/DifficultQuestionItem" },
+      "description": "Owner-scoped difficult exam questions for targeted practice."
+    }
+  }
+}

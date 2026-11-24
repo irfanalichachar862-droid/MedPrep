@@ -1,0 +1,831 @@
+package com.example.ui.screens
+
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.BrightnessAuto
+import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.CloudSync
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.TableView
+import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.PictureAsPdf
+import com.example.data.PdfMcqExporter
+import com.example.R
+import com.example.data.AccessKey
+import com.example.data.DeviceIdProvider
+import com.example.data.ExamSession
+import com.example.data.McqQuestion
+import com.example.data.MedPrepConstants
+import com.example.data.SpreadsheetMcqReader
+import com.example.data.SyncReport
+import com.example.data.UiState
+import com.example.data.UserProfile
+import com.example.ui.theme.AppThemeMode
+import com.example.ui.theme.LocalMedPrepColors
+import com.example.ui.theme.MonoFontFamily
+import com.google.firebase.Timestamp
+import java.text.SimpleDateFormat
+import java.util.Locale
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ProfileScreen(
+    profileState: UiState<UserProfile?>,
+    publishedQuestions: List<McqQuestion>,
+    examSessions: List<ExamSession>,
+    activeAccessKey: AccessKey?,
+    deviceId: String,
+    themeMode: AppThemeMode,
+    isAdminUser: Boolean,
+    isSyncing: Boolean,
+    lastSyncReport: SyncReport?,
+    isMutating: Boolean,
+    onSelectThemeMode: (AppThemeMode) -> Unit,
+    onOpenMoreTab: (MoreMenuTab) -> Unit,
+    onSaveOfflinePack: (String, String, List<McqQuestion>) -> Unit,
+    onSyncNow: () -> Unit,
+    onSavePreferences: (String, String, Long) -> Unit,
+    onPostMessage: (String) -> Unit,
+    onSignOut: () -> Unit
+) {
+    val context = LocalContext.current
+    val extendedColors = LocalMedPrepColors.current
+    val clipboard = LocalClipboardManager.current
+    val profile = (profileState as? UiState.Success)?.data
+    val publishedCount = publishedQuestions.size
+
+    var displayName by remember { mutableStateOf(profile?.displayName ?: "Medical Student") }
+    var targetExam by remember { mutableStateOf(profile?.targetExam ?: MedPrepConstants.EXAM_TRACKS.first()) }
+    var dailyGoal by remember { mutableLongStateOf(profile?.dailyGoal ?: 25L) }
+
+    val downloadPdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    PdfMcqExporter.writeMcqsPdf(
+                        outputStream = out,
+                        title = "MedPrep — Complete MCQ Bank",
+                        subtitle = "Offline PDF with Answer Keys & Reasons",
+                        questions = publishedQuestions
+                    )
+                }
+                onSaveOfflinePack("All Subjects Interactive Pack", "All Subjects", publishedQuestions)
+                onPostMessage("Saved $publishedCount MCQs as PDF + Interactive Offline Pack!")
+            } catch (e: Exception) {
+                onPostMessage("PDF download failed: ${e.localizedMessage ?: "Error"}")
+            }
+        }
+    }
+
+    val downloadCsvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val csv = SpreadsheetMcqReader.exportQuestionsToCsv(publishedQuestions)
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(csv.toByteArray(Charsets.UTF_8))
+                }
+                onPostMessage("Downloaded $publishedCount MCQs as CSV!")
+            } catch (e: Exception) {
+                onPostMessage("Download failed: ${e.localizedMessage ?: "Error"}")
+            }
+        }
+    }
+
+    LaunchedEffect(profile?.id, profile?.displayName, profile?.targetExam, profile?.dailyGoal) {
+        if (profile != null) {
+            displayName = profile.displayName
+            targetExam = profile.targetExam
+            dailyGoal = profile.dailyGoal
+        }
+    }
+
+    val initials = remember(displayName) {
+        displayName.split(" ").filter { it.isNotBlank() }.take(2)
+            .joinToString("") { it.first().uppercase() }.ifBlank { "MD" }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .widthIn(max = 720.dp),
+            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Text(
+                    text = stringResource(R.string.profile_title),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+
+            // Account Summary Card
+            item {
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        if (isAdminUser) {
+                            Image(
+                                painter = painterResource(R.drawable.admin_profile_photo),
+                                contentDescription = "Admin Avatar",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = initials,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = profile?.displayName ?: displayName,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                if (isAdminUser) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = RoundedCornerShape(50)
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.profile_admin_badge),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            val email = profile?.email
+                            if (!email.isNullOrBlank()) {
+                                Text(
+                                    text = email,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Student 1-Device Access Key License Card (Shown to students)
+            if (!isAdminUser && activeAccessKey != null) {
+                item {
+                    Card(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(containerColor = extendedColors.successContainer.copy(alpha = 0.55f)),
+                        border = BorderStroke(1.dp, extendedColors.success.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(extendedColors.success.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Key,
+                                    contentDescription = "Active Access Key",
+                                    tint = extendedColors.onSuccessContainer
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Verified 1-Device Access Key",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = extendedColors.onSuccessContainer
+                                )
+                                Text(
+                                    text = activeAccessKey.keyCode,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
+                                    color = extendedColors.onSuccessContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Locked to Device: ${DeviceIdProvider.shortLabel(deviceId)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = extendedColors.onSuccessContainer.copy(alpha = 0.85f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Quick Launcher into the 8-Tab Liquid Glass Menu Hub (Profile, Plans, Appearance, Progress, Notes, Difficult, Settings & Backup, App Guide)
+            item {
+                Card(
+                    onClick = { onOpenMoreTab(MoreMenuTab.PROFILE) },
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("profile_open_hub_card")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Apps,
+                            contentDescription = "Open Full Menu Hub",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Open Full Menu Hub (8 Liquid Glass Tabs)",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = "Photo, Plans, Palettes, Schedule, Notes, Difficult Qs, Backup & Guide",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                            contentDescription = "Open Menu Hub",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+            }
+
+            // Light & Dark Theme Switcher Card
+            item {
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Palette,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = stringResource(R.string.profile_appearance),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ThemeModeChip(
+                                label = "Light",
+                                icon = Icons.Rounded.LightMode,
+                                selected = themeMode == AppThemeMode.LIGHT,
+                                tag = "theme_light_chip",
+                                onClick = { onSelectThemeMode(AppThemeMode.LIGHT) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            ThemeModeChip(
+                                label = "Dark",
+                                icon = Icons.Rounded.DarkMode,
+                                selected = themeMode == AppThemeMode.DARK,
+                                tag = "theme_dark_chip",
+                                onClick = { onSelectThemeMode(AppThemeMode.DARK) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            ThemeModeChip(
+                                label = "System",
+                                icon = Icons.Rounded.BrightnessAuto,
+                                selected = themeMode == AppThemeMode.SYSTEM,
+                                tag = "theme_system_chip",
+                                onClick = { onSelectThemeMode(AppThemeMode.SYSTEM) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Offline Sync + Download MCQs Card
+            item {
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CloudDone,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(26.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.profile_sync_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    text = "$publishedCount published MCQs cached • Download anytime for offline study",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f)
+                                )
+                            }
+                        }
+
+                        val syncTimestamp = profile?.lastSyncedAt
+                        if (syncTimestamp != null || lastSyncReport != null) {
+                            Text(
+                                text = lastSyncReport?.message
+                                    ?: "Last synced: ${formatTimestamp(syncTimestamp)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+
+                        Button(
+                            onClick = onSyncNow,
+                            enabled = !isSyncing,
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("profile_sync_now_button")
+                        ) {
+                            if (isSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(R.string.profile_syncing))
+                            } else {
+                                Icon(Icons.Rounded.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(R.string.profile_sync_now))
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { downloadPdfLauncher.launch("MedPrep_MCQs_Study_Sheet.pdf") },
+                                enabled = publishedCount > 0,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .testTag("profile_download_pdf_button")
+                            ) {
+                                Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Save .PDF")
+                            }
+                            OutlinedButton(
+                                onClick = { downloadCsvLauncher.launch("MedPrep_MCQs.csv") },
+                                enabled = publishedCount > 0,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .testTag("profile_download_csv_button")
+                            ) {
+                                Icon(Icons.Rounded.TableView, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Save .CSV")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Study Plan Settings Card
+            item {
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Text(
+                            text = "Study Plan Settings",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+
+                        OutlinedTextField(
+                            value = displayName,
+                            onValueChange = { displayName = it.take(80) },
+                            label = { Text("Display Name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("profile_name_input")
+                        )
+
+                        Text(
+                            text = stringResource(R.string.profile_exam_track),
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            MedPrepConstants.EXAM_TRACKS.forEach { track ->
+                                FilterChip(
+                                    selected = targetExam == track,
+                                    onClick = { targetExam = track },
+                                    label = { Text(track) }
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = stringResource(R.string.profile_daily_goal),
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                Text(
+                                    text = "Target MCQs per day",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                IconButton(onClick = { dailyGoal = (dailyGoal - 5L).coerceAtLeast(5L) }) {
+                                    Icon(Icons.Rounded.Remove, contentDescription = "Decrease daily goal")
+                                }
+                                Text(
+                                    text = "$dailyGoal",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
+                                    fontWeight = FontWeight.Bold
+                                )
+                                IconButton(onClick = { dailyGoal = (dailyGoal + 5L).coerceAtMost(200L) }) {
+                                    Icon(Icons.Rounded.Add, contentDescription = "Increase daily goal")
+                                }
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                if (displayName.trim().isNotEmpty()) {
+                                    onSavePreferences(displayName.trim(), targetExam, dailyGoal)
+                                }
+                            },
+                            enabled = !isMutating && displayName.trim().isNotEmpty(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("profile_save_preferences_button")
+                        ) {
+                            Text("Save Study Plan")
+                        }
+                    }
+                }
+            }
+
+            // Recent Sessions History
+            if (examSessions.isNotEmpty()) {
+                item {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.History,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = stringResource(R.string.profile_recent_sessions),
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    }
+                }
+
+                items(examSessions.take(8), key = { it.id }) { session ->
+                    val pct = if (session.totalQuestions > 0) {
+                        ((session.correctCount * 100) / session.totalQuestions).toInt()
+                    } else 0
+                    Card(
+                        shape = MaterialTheme.shapes.medium,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${session.mode.replaceFirstChar { it.uppercase() }} • ${session.subjectFilter}",
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                Text(
+                                    text = "${session.correctCount}/${session.totalQuestions} correct • ${formatDuration(session.durationSeconds)} • ${formatTimestamp(session.createdAt)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Surface(
+                                color = if (pct >= 70) extendedColors.successContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = "$pct%",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontFamily = MonoFontFamily),
+                                    color = if (pct >= 70) extendedColors.onSuccessContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Sign Out
+            item {
+                OutlinedButton(
+                    onClick = onSignOut,
+                    shape = MaterialTheme.shapes.medium,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("profile_sign_out_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.Logout,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.profile_sign_out),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
+            // Admin Contact Footer with Admin's Profile Photo & Email
+            item {
+                val adminEmail = stringResource(R.string.profile_admin_email)
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("profile_admin_contact_footer")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(R.drawable.admin_profile_photo),
+                            contentDescription = "Admin Profile Photo",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.VerifiedUser,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = stringResource(R.string.profile_admin_contact_title),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = "Admin: $adminEmail",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                clipboard.setText(AnnotatedString(adminEmail))
+                                onPostMessage("Copied admin email: $adminEmail")
+                            },
+                            modifier = Modifier.testTag("copy_admin_email_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.ContentCopy,
+                                contentDescription = "Copy admin email",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
+            item { Spacer(modifier = Modifier.height(16.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ThemeModeChip(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    tag: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(
+            width = if (selected) 1.5.dp else 1.dp,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+        ),
+        modifier = modifier
+            .height(48.dp)
+            .testTag(tag)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(17.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private fun formatTimestamp(timestamp: Timestamp?): String {
+    val date = (timestamp ?: Timestamp.now()).toDate()
+    val formatter = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
+    return formatter.format(date)
+}

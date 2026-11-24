@@ -1,0 +1,83 @@
+<resources>
+    <string name="app_name">MedPrep</string>
+
+    <!-- Navigation -->
+    <string name="nav_study">Study</string>
+    <string name="nav_courses">Courses</string>
+    <string name="nav_posts">Posts</string>
+    <string name="nav_profile">Profile</string>
+
+    <!-- Auth -->
+    <string name="auth_headline">MDCAT &amp; Pre-Med\nMCQ Mastery</string>
+    <string name="auth_subtitle">Master Biology, Chemistry, Physics, English &amp; Logical Reasoning with shuffled options, reasons, YouTube videos &amp; offline downloads.</string>
+    <string name="auth_sign_in_google">Sign in with Google</string>
+    <string name="auth_signing_in">Signing in…</string>
+    <string name="auth_feature_offline_title">Offline Sync &amp; MCQ Download</string>
+    <string name="auth_feature_offline_desc">Sync or download MCQs with Reasons for offline study anywhere.</string>
+    <string name="auth_feature_studio_title">Student-Only Specific Key &amp; Interactive HTML</string>
+    <string name="auth_feature_studio_desc">Students unlock with a specific 1-device Access Key; explore interactive HTML lessons linked to MCQs.</string>
+    <string name="auth_feature_exam_title">Shuffled Retests &amp; Exact Chemistry Formulas</string>
+    <string name="auth_feature_exam_desc">Randomized A–D options, instant reasons, and exact chemical structure formatting.</string>
+
+    <!-- Access Key Gate -->
+    <string name="key_gate_title">Student-Only Access Key Login</string>
+    <string name="key_gate_subtitle">Students must enter their specific Admin-issued Access Key to unlock the Student App. Each key binds permanently to 1 student and 1 device.</string>
+    <string name="key_gate_device_locked_title">Key Locked to Another Device</string>
+    <string name="key_gate_revoked_title">Access Key Revoked</string>
+    <string name="key_gate_activate_button">Activate &amp; Unlock Student App</string>
+
+    <!-- Dashboard -->
+    <string name="study_greeting_morning">Good morning</string>
+    <string name="study_greeting_afternoon">Good afternoon</string>
+    <string name="study_greeting_evening">Good evening</string>
+    <string name="study_daily_goal">Daily Goal</string>
+    <string name="study_accuracy">Accuracy</string>
+    <string name="study_offline_ready">Offline Ready</string>
+    <string name="study_quick_practice">Practice Mode</string>
+    <string name="study_quick_practice_sub">Shuffled A–D options + instant Reason</string>
+    <string name="study_timed_exam">Timed Exam</string>
+    <string name="study_timed_exam_sub">Shuffled exam simulation &amp; retest</string>
+    <string name="study_mistakes">Mistake Review</string>
+    <string name="study_bookmarks">Bookmarked</string>
+    <string name="study_subjects_heading">Subjects (5 Core)</string>
+
+    <!-- Posts Feed -->
+    <string name="posts_feed_title">Interactive Lessons &amp; Posts</string>
+    <string name="posts_feed_subtitle">Interactive HTML topic explanations linked directly to MCQs, plus web notes and YouTube lectures.</string>
+
+    <!-- Quiz Player -->
+    <string name="quiz_explanation">Reason</string>
+    <string name="quiz_next">Next Question</string>
+    <string name="quiz_previous">Previous</string>
+    <string name="quiz_finish">Finish Session</string>
+    <string name="quiz_summary_title">Session Complete</string>
+    <string name="quiz_retest_shuffled">Retest (Shuffle Questions &amp; Options)</string>
+    <string name="quiz_review_mistakes">Review Answers &amp; Reasons</string>
+    <string name="quiz_back_home">Back to Study</string>
+
+    <!-- Separate Admin Portal -->
+    <string name="admin_panel_title">Admin Portal</string>
+    <string name="admin_tab_overview">Home</string>
+    <string name="admin_tab_courses">Courses</string>
+    <string name="admin_tab_mcqs">MCQs</string>
+    <string name="admin_tab_excel">Excel</string>
+    <string name="admin_tab_posts">Posts</string>
+    <string name="admin_tab_keys">Keys</string>
+    <string name="studio_publish">Publish</string>
+    <string name="studio_unpublish">Move to Draft</string>
+    <string name="studio_search_hint">Search question, subject, or topic…</string>
+
+    <!-- Profile, Theme & Admin Contact -->
+    <string name="profile_title">Profile &amp; Settings</string>
+    <string name="profile_appearance">Appearance (Theme)</string>
+    <string name="profile_sync_title">Offline Sync &amp; MCQ Downloads</string>
+    <string name="profile_sync_now">Sync Now</string>
+    <string name="profile_syncing">Syncing…</string>
+    <string name="profile_exam_track">Target Exam</string>
+    <string name="profile_daily_goal">Daily Question Goal</string>
+    <string name="profile_recent_sessions">Recent Sessions</string>
+    <string name="profile_sign_out">Sign Out</string>
+    <string name="profile_admin_badge">Admin</string>
+    <string name="profile_admin_contact_title">Admin Support &amp; Contact</string>
+    <string name="profile_admin_email">irfanalichachar862@gmail.com</string>
+</resources>
