@@ -6,6 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.TableView
@@ -76,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import com.example.data.PdfMcqExporter
+import com.example.data.PlanEntitlements
 import com.example.R
 import com.example.data.AccessKey
 import com.example.data.DeviceIdProvider
@@ -83,9 +86,11 @@ import com.example.data.ExamSession
 import com.example.data.McqQuestion
 import com.example.data.MedPrepConstants
 import com.example.data.SpreadsheetMcqReader
+import com.example.data.SubscriptionPlanTier
 import com.example.data.SyncReport
 import com.example.data.UiState
 import com.example.data.UserProfile
+import com.example.ui.components.PlanTierBadge
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.LocalMedPrepColors
 import com.example.ui.theme.MonoFontFamily
@@ -118,6 +123,8 @@ fun ProfileScreen(
     val extendedColors = LocalMedPrepColors.current
     val clipboard = LocalClipboardManager.current
     val profile = (profileState as? UiState.Success)?.data
+    val activePlan = SubscriptionPlanTier.fromKey(profile?.subscriptionPlan)
+    val canDownloadPdfAndPacks = PlanEntitlements.canDownloadPdfAndOfflinePacks(activePlan)
     val publishedCount = publishedQuestions.size
 
     var displayName by remember { mutableStateOf(profile?.displayName ?: "Medical Student") }
@@ -256,6 +263,12 @@ fun ProfileScreen(
                                         )
                                     }
                                 }
+                                PlanTierBadge(
+                                    tier = activePlan,
+                                    modifier = Modifier
+                                        .clickable { onOpenMoreTab(MoreMenuTab.PLANS) }
+                                        .testTag("profile_plan_badge")
+                                )
                             }
                             val email = profile?.email
                             if (!email.isNullOrBlank()) {
@@ -501,28 +514,50 @@ fun ProfileScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { downloadPdfLauncher.launch("MedPrep_MCQs_Study_Sheet.pdf") },
+                                onClick = {
+                                    if (canDownloadPdfAndPacks) {
+                                        downloadPdfLauncher.launch("MedPrep_MCQs_Study_Sheet.pdf")
+                                    } else {
+                                        onPostMessage("MCQ PDF downloads require Basic Plan (PKR 499/mo via JazzCash).")
+                                        onOpenMoreTab(MoreMenuTab.PLANS)
+                                    }
+                                },
                                 enabled = publishedCount > 0,
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(46.dp)
                                     .testTag("profile_download_pdf_button")
                             ) {
-                                Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(
+                                    imageVector = if (canDownloadPdfAndPacks) Icons.Rounded.PictureAsPdf else Icons.Rounded.Lock,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Save .PDF")
+                                Text(if (canDownloadPdfAndPacks) "Save .PDF" else "PDF (Basic)")
                             }
                             OutlinedButton(
-                                onClick = { downloadCsvLauncher.launch("MedPrep_MCQs.csv") },
+                                onClick = {
+                                    if (canDownloadPdfAndPacks) {
+                                        downloadCsvLauncher.launch("MedPrep_MCQs.csv")
+                                    } else {
+                                        onPostMessage("MCQ CSV downloads require Basic Plan (PKR 499/mo via JazzCash).")
+                                        onOpenMoreTab(MoreMenuTab.PLANS)
+                                    }
+                                },
                                 enabled = publishedCount > 0,
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(46.dp)
                                     .testTag("profile_download_csv_button")
                             ) {
-                                Icon(Icons.Rounded.TableView, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(
+                                    imageVector = if (canDownloadPdfAndPacks) Icons.Rounded.TableView else Icons.Rounded.Lock,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Save .CSV")
+                                Text(if (canDownloadPdfAndPacks) "Save .CSV" else "CSV (Basic)")
                             }
                         }
                     }

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlayCircle
@@ -82,27 +83,36 @@ import com.example.data.CsvMcqParser
 import com.example.data.FormulaTextPreserver
 import com.example.data.McqQuestion
 import com.example.data.MedPrepConstants
+import com.example.data.PlanEntitlements
 import com.example.data.StudyMode
 import com.example.data.StudyPost
+import com.example.data.SubscriptionPlanTier
 import com.example.data.UiState
 import com.example.ui.components.FormulaText
 import com.example.ui.components.LiquidGlassSurface
+import com.example.ui.components.PlanLockCard
+import com.example.ui.components.PlanTierBadge
 import com.example.ui.theme.LocalMedPrepColors
 import com.example.ui.theme.subjectVisualFor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentCoursesScreen(
+    activePlan: SubscriptionPlanTier,
     coursesState: UiState<List<CourseItem>>,
     publishedPosts: List<StudyPost>,
     publishedQuestions: List<McqQuestion>,
     isDarkTheme: Boolean,
     onOpenInteractiveLesson: (StudyPost) -> Unit,
     onPracticeCourseMcqs: (StudyMode, String?, Int) -> Unit,
+    onOpenPlansTab: () -> Unit,
     onPostMessage: (String) -> Unit
 ) {
     val context = LocalContext.current
     val ext = LocalMedPrepColors.current
+    val canAccessFullCourses = PlanEntitlements.canAccessFullCourses(activePlan)
+    val canOpenHtml = PlanEntitlements.canOpenInteractiveHtml(activePlan)
+    val maxPracticeCap = PlanEntitlements.maxPracticeQuestionsPerSession(activePlan)
     var selectedSubject by rememberSaveable { mutableStateOf("All") }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedCourse by remember { mutableStateOf<CourseItem?>(null) }
@@ -176,7 +186,11 @@ fun StudentCoursesScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "${allCourses.size} structured courses • Linked posts, HTML lessons & MCQs",
+                                    text = if (canAccessFullCourses) {
+                                        "${allCourses.size} structured courses • Full Advance access active"
+                                    } else {
+                                        "${allCourses.size} courses preview • Upgrade to Advance (PKR 999/mo) for full syllabus & lessons"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color.White.copy(alpha = 0.85f)
                                 )
@@ -377,7 +391,11 @@ fun StudentCoursesScreen(
                                             onClick = { selectedCourse = course },
                                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                                         ) {
-                                            Text("Open Course")
+                                            if (!canAccessFullCourses) {
+                                                Icon(Icons.Rounded.Lock, contentDescription = null, modifier = Modifier.size(15.dp))
+                                                Spacer(modifier = Modifier.width(5.dp))
+                                            }
+                                            Text(if (canAccessFullCourses) "Open Course" else "Preview")
                                         }
                                     }
                                 }
@@ -434,132 +452,151 @@ fun StudentCoursesScreen(
                     )
                 }
 
-                if (viewingCourse.syllabusOutline.isNotBlank()) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                        shape = MaterialTheme.shapes.large,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = "Course Syllabus & Modules",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            FormulaText(
-                                text = viewingCourse.syllabusOutline,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                }
-
-                // Quick actions: Practice MCQs + YouTube / Web links
-                Button(
-                    onClick = {
-                        selectedCourse = null
-                        onPracticeCourseMcqs(StudyMode.PRACTICE, practiceSubject, 25)
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("course_detail_practice_mcqs_button")
-                ) {
-                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Practice ${viewingCourse.subject} MCQs")
-                }
-
-                if (!viewingCourse.youtubeUrl.isNullOrBlank() || !viewingCourse.webUrl.isNullOrBlank()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (!viewingCourse.youtubeUrl.isNullOrBlank()) {
-                            OutlinedButton(
-                                onClick = { openExternalCourseUrl(context, viewingCourse.youtubeUrl, onPostMessage) },
-                                modifier = Modifier.weight(1f).height(46.dp)
-                            ) {
-                                Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Video Lectures")
-                            }
-                        }
-                        if (!viewingCourse.webUrl.isNullOrBlank()) {
-                            OutlinedButton(
-                                onClick = { openExternalCourseUrl(context, viewingCourse.webUrl, onPostMessage) },
-                                modifier = Modifier.weight(1f).height(46.dp)
-                            ) {
-                                Icon(Icons.Rounded.Language, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Course Notes")
-                            }
-                        }
-                    }
-                }
-
-                // Attached Posts & Interactive HTML Lessons
-                Text(
-                    text = "Course Lessons & Posts (${coursePosts.size})",
-                    style = MaterialTheme.typography.titleMedium
-                )
-
-                if (coursePosts.isEmpty()) {
-                    Text(
-                        text = "No posts attached to this course yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                if (!canAccessFullCourses) {
+                    PlanLockCard(
+                        requiredTier = SubscriptionPlanTier.ADVANCE,
+                        featureTitle = "Full Course Access & Syllabus",
+                        description = "Upgrade to the Advance Plan (PKR 999/mo via JazzCash) to unlock the full course syllabus, attached video & web resources, interactive HTML lessons, and complete course MCQ drills.",
+                        onUpgradeClick = {
+                            selectedCourse = null
+                            onOpenPlansTab()
+                        },
+                        testTag = "course_unlock_advance_button"
                     )
                 } else {
-                    coursePosts.forEach { post ->
-                        Card(
-                            onClick = {
-                                if (post.hasInteractiveHtml) {
-                                    selectedCourse = null
-                                    onOpenInteractiveLesson(post)
-                                } else if (!post.webUrl.isNullOrBlank()) {
-                                    openExternalCourseUrl(context, post.webUrl, onPostMessage)
-                                } else if (!post.youtubeUrl.isNullOrBlank()) {
-                                    openExternalCourseUrl(context, post.youtubeUrl, onPostMessage)
-                                } else {
-                                    onPostMessage(post.body.ifBlank { post.title })
-                                }
-                            },
-                            shape = MaterialTheme.shapes.medium,
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    if (viewingCourse.syllabusOutline.isNotBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            shape = MaterialTheme.shapes.large,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Icon(
-                                    imageVector = if (post.hasInteractiveHtml) Icons.Rounded.Code else Icons.AutoMirrored.Rounded.Article,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
+                                Text(
+                                    text = "Course Syllabus & Modules",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = post.title,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                FormulaText(
+                                    text = viewingCourse.syllabusOutline,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+
+                    // Quick actions: Practice MCQs + YouTube / Web links
+                    Button(
+                        onClick = {
+                            selectedCourse = null
+                            onPracticeCourseMcqs(StudyMode.PRACTICE, practiceSubject, minOf(25, maxPracticeCap))
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag("course_detail_practice_mcqs_button")
+                    ) {
+                        Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Practice ${viewingCourse.subject} MCQs")
+                    }
+
+                    if (!viewingCourse.youtubeUrl.isNullOrBlank() || !viewingCourse.webUrl.isNullOrBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (!viewingCourse.youtubeUrl.isNullOrBlank()) {
+                                OutlinedButton(
+                                    onClick = { openExternalCourseUrl(context, viewingCourse.youtubeUrl, onPostMessage) },
+                                    modifier = Modifier.weight(1f).height(46.dp)
+                                ) {
+                                    Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Video Lectures")
+                                }
+                            }
+                            if (!viewingCourse.webUrl.isNullOrBlank()) {
+                                OutlinedButton(
+                                    onClick = { openExternalCourseUrl(context, viewingCourse.webUrl, onPostMessage) },
+                                    modifier = Modifier.weight(1f).height(46.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Language, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Course Notes")
+                                }
+                            }
+                        }
+                    }
+
+                    // Attached Posts & Interactive HTML Lessons
+                    Text(
+                        text = "Course Lessons & Posts (${coursePosts.size})",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+
+                    if (coursePosts.isEmpty()) {
+                        Text(
+                            text = "No posts attached to this course yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        coursePosts.forEach { post ->
+                            Card(
+                                onClick = {
+                                    if (post.hasInteractiveHtml) {
+                                        if (canOpenHtml) {
+                                            selectedCourse = null
+                                            onOpenInteractiveLesson(post)
+                                        } else {
+                                            selectedCourse = null
+                                            onPostMessage("Interactive HTML lessons require Advance Plan (PKR 999/mo).")
+                                            onOpenPlansTab()
+                                        }
+                                    } else if (!post.webUrl.isNullOrBlank()) {
+                                        openExternalCourseUrl(context, post.webUrl, onPostMessage)
+                                    } else if (!post.youtubeUrl.isNullOrBlank()) {
+                                        openExternalCourseUrl(context, post.youtubeUrl, onPostMessage)
+                                    } else {
+                                        onPostMessage(post.body.ifBlank { post.title })
+                                    }
+                                },
+                                shape = MaterialTheme.shapes.medium,
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (post.hasInteractiveHtml) Icons.Rounded.Code else Icons.AutoMirrored.Rounded.Article,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
-                                    Text(
-                                        text = buildString {
-                                            append(post.topic.ifBlank { post.subject })
-                                            if (post.hasInteractiveHtml) append(" • Interactive HTML")
-                                            if (!post.youtubeUrl.isNullOrBlank()) append(" • Video")
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = post.title,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = buildString {
+                                                append(post.topic.ifBlank { post.subject })
+                                                if (post.hasInteractiveHtml) append(" • Interactive HTML")
+                                                if (!post.youtubeUrl.isNullOrBlank()) append(" • Video")
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
                         }

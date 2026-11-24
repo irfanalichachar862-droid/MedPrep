@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.HourglassEmpty
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -75,11 +76,14 @@ import com.example.data.DownloadedMcqPack
 import com.example.data.McqQuestion
 import com.example.data.MedPrepConstants
 import com.example.data.PdfMcqExporter
+import com.example.data.PlanEntitlements
 import com.example.data.QuestionAttempt
 import com.example.data.StudyMode
 import com.example.data.SubjectStats
+import com.example.data.SubscriptionPlanTier
 import com.example.data.UiState
 import com.example.data.UserProfile
+import com.example.ui.components.PlanTierBadge
 import com.example.ui.theme.LocalMedPrepColors
 import com.example.ui.theme.MonoFontFamily
 import com.example.ui.theme.subjectVisualFor
@@ -104,6 +108,10 @@ fun DashboardScreen(
     val context = LocalContext.current
     val extendedColors = LocalMedPrepColors.current
     val profile = (profileState as? UiState.Success)?.data
+    val activePlan = SubscriptionPlanTier.fromKey(profile?.subscriptionPlan)
+    val maxPracticeCap = PlanEntitlements.maxPracticeQuestionsPerSession(activePlan)
+    val canTimedExam = PlanEntitlements.canUseTimedExam(activePlan)
+    val canDownloadPdfAndPacks = PlanEntitlements.canDownloadPdfAndOfflinePacks(activePlan)
     // Strictly keep ONLY the 5 core subjects
     val questions = remember(publishedState) {
         (publishedState as? UiState.Success)?.data
@@ -215,13 +223,24 @@ fun DashboardScreen(
                                         color = Color.White.copy(alpha = 0.85f)
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = profile?.targetExam ?: "MDCAT",
-                                        style = MaterialTheme.typography.headlineMedium,
-                                        color = Color.White,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = profile?.targetExam ?: "MDCAT",
+                                            style = MaterialTheme.typography.headlineMedium,
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        PlanTierBadge(
+                                            tier = activePlan,
+                                            modifier = Modifier
+                                                .clickable { onOpenMoreTab(MoreMenuTab.PLANS) }
+                                                .testTag("dashboard_plan_badge")
+                                        )
+                                    }
                                 }
 
                                 Row(
@@ -440,22 +459,45 @@ fun DashboardScreen(
                             ) {
                                 ModeLaunchCard(
                                     title = stringResource(R.string.study_quick_practice),
-                                    subtitle = stringResource(R.string.study_quick_practice_sub),
+                                    subtitle = if (activePlan == SubscriptionPlanTier.FREE) {
+                                        "Free Plan: up to $maxPracticeCap MCQs/run"
+                                    } else {
+                                        stringResource(R.string.study_quick_practice_sub)
+                                    },
                                     icon = Icons.Rounded.Quiz,
                                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                     tag = "start_practice_button",
-                                    onClick = { onStartStudy(StudyMode.PRACTICE, null, 20) },
+                                    onClick = { onStartStudy(StudyMode.PRACTICE, null, minOf(20, maxPracticeCap)) },
                                     modifier = Modifier.weight(1f)
                                 )
                                 ModeLaunchCard(
                                     title = stringResource(R.string.study_timed_exam),
-                                    subtitle = stringResource(R.string.study_timed_exam_sub),
-                                    icon = Icons.Rounded.Timer,
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    subtitle = if (canTimedExam) {
+                                        stringResource(R.string.study_timed_exam_sub)
+                                    } else {
+                                        "Locked • Basic Plan (PKR 499/mo)"
+                                    },
+                                    icon = if (canTimedExam) Icons.Rounded.Timer else Icons.Rounded.Lock,
+                                    containerColor = if (canTimedExam) {
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                    },
+                                    contentColor = if (canTimedExam) {
+                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
                                     tag = "start_exam_button",
-                                    onClick = { onStartStudy(StudyMode.EXAM, null, minOf(15, questions.size)) },
+                                    onClick = {
+                                        if (canTimedExam) {
+                                            onStartStudy(StudyMode.EXAM, null, minOf(15, questions.size))
+                                        } else {
+                                            onPostMessage("Timed Exam Mode requires Basic Plan (PKR 499/mo via JazzCash).")
+                                            onOpenMoreTab(MoreMenuTab.PLANS)
+                                        }
+                                    },
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -473,7 +515,7 @@ fun DashboardScreen(
                                     icon = Icons.Rounded.Replay,
                                     accent = MaterialTheme.colorScheme.error,
                                     tag = "review_mistakes_button",
-                                    onClick = { onStartStudy(StudyMode.MISTAKES, null, 50) },
+                                    onClick = { onStartStudy(StudyMode.MISTAKES, null, maxPracticeCap) },
                                     modifier = Modifier.weight(1f)
                                 )
                                 CompactReviewCard(
@@ -482,32 +524,56 @@ fun DashboardScreen(
                                     icon = Icons.Rounded.Bookmarks,
                                     accent = extendedColors.warning,
                                     tag = "review_bookmarks_button",
-                                    onClick = { onStartStudy(StudyMode.BOOKMARKS, null, 50) },
+                                    onClick = { onStartStudy(StudyMode.BOOKMARKS, null, maxPracticeCap) },
                                     modifier = Modifier.weight(1f)
                                 )
                             }
                         }
 
-                        // Download MCQs as PDF + Interactive Offline Mode Card
+                        // Download MCQs as PDF + Interactive Offline Mode Card (Basic Plan+)
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(
-                                    onClick = { downloadStudyPdfLauncher.launch("MedPrep_MCQs_Study_Sheet.pdf") },
+                                    onClick = {
+                                        if (canDownloadPdfAndPacks) {
+                                            downloadStudyPdfLauncher.launch("MedPrep_MCQs_Study_Sheet.pdf")
+                                        } else {
+                                            onPostMessage("PDF & Interactive Offline MCQ Packs require Basic Plan (PKR 499/mo).")
+                                            onOpenMoreTab(MoreMenuTab.PLANS)
+                                        }
+                                    },
                                     shape = MaterialTheme.shapes.medium,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(48.dp)
                                         .testTag("dashboard_download_mcqs_button")
                                 ) {
-                                    Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Icon(
+                                        imageVector = if (canDownloadPdfAndPacks) Icons.Rounded.PictureAsPdf else Icons.Rounded.Lock,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Download ${questions.size} MCQs as PDF + Interactive Pack")
+                                    Text(
+                                        text = if (canDownloadPdfAndPacks) {
+                                            "Download ${questions.size} MCQs as PDF + Interactive Pack"
+                                        } else {
+                                            "Unlock PDF & Offline Pack (Basic Plan • PKR 499/mo)"
+                                        }
+                                    )
                                 }
 
                                 val latestPack = downloadedPacks.firstOrNull()
                                 if (latestPack != null) {
                                     Surface(
-                                        onClick = { onStartCustomQuiz(latestPack.title, latestPack.questions) },
+                                        onClick = {
+                                            if (canDownloadPdfAndPacks) {
+                                                onStartCustomQuiz(latestPack.title, latestPack.questions)
+                                            } else {
+                                                onPostMessage("Interactive Offline Packs require Basic Plan (PKR 499/mo).")
+                                                onOpenMoreTab(MoreMenuTab.PLANS)
+                                            }
+                                        },
                                         shape = MaterialTheme.shapes.medium,
                                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
                                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
@@ -521,13 +587,17 @@ fun DashboardScreen(
                                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Rounded.PlayArrow,
+                                                imageVector = if (canDownloadPdfAndPacks) Icons.Rounded.PlayArrow else Icons.Rounded.Lock,
                                                 contentDescription = null,
                                                 tint = MaterialTheme.colorScheme.primary
                                             )
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
-                                                    text = "Run Downloaded MCQs Interactively",
+                                                    text = if (canDownloadPdfAndPacks) {
+                                                        "Run Downloaded MCQs Interactively"
+                                                    } else {
+                                                        "Offline Pack Locked (Basic Plan)"
+                                                    },
                                                     style = MaterialTheme.typography.labelLarge,
                                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                                 )
@@ -565,7 +635,7 @@ fun DashboardScreen(
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = "5 subjects",
+                                text = if (activePlan == SubscriptionPlanTier.FREE) "5 subjects • 10 MCQs/run" else "5 subjects",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -576,7 +646,7 @@ fun DashboardScreen(
                         SubjectMasteryCard(
                             stats = stat,
                             isDarkTheme = isDarkTheme,
-                            onClick = { onStartStudy(StudyMode.PRACTICE, stat.subject, 25) }
+                            onClick = { onStartStudy(StudyMode.PRACTICE, stat.subject, minOf(25, maxPracticeCap)) }
                         )
                     }
                 }

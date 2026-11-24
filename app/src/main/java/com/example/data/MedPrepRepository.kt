@@ -246,6 +246,52 @@ class MedPrepRepository(
         )
     }.flowOn(Dispatchers.IO)
 
+    fun observeUserSubscriptionRequests(userId: String): Flow<List<SubscriptionRequest>> = flow {
+        val path = "subscription_requests"
+        emitAll(
+            db.collection("subscription_requests")
+                .whereEqualTo("userId", userId)
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.toObjects(
+                        SubscriptionRequest::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    ).sortedByDescending { it.createdAt?.seconds ?: 0L }
+                }
+                .catch { error -> handleStreamError(error, OperationType.LIST, path, userId) }
+        )
+    }.flowOn(Dispatchers.IO)
+
+    fun observeAllSubscriptionRequests(userId: String): Flow<List<SubscriptionRequest>> = flow {
+        val path = "subscription_requests"
+        emitAll(
+            db.collection("subscription_requests")
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.toObjects(
+                        SubscriptionRequest::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    ).sortedByDescending { it.createdAt?.seconds ?: 0L }
+                }
+                .catch { error -> handleStreamError(error, OperationType.LIST, path, userId) }
+        )
+    }.flowOn(Dispatchers.IO)
+
+    fun observeAllUserProfiles(userId: String): Flow<List<UserProfile>> = flow {
+        val path = "users"
+        emitAll(
+            db.collection("users")
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.toObjects(
+                        UserProfile::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    ).sortedByDescending { it.updatedAt?.seconds ?: it.createdAt?.seconds ?: 0L }
+                }
+                .catch { error -> handleStreamError(error, OperationType.LIST, path, userId) }
+        )
+    }.flowOn(Dispatchers.IO)
+
     fun observeAttempts(userId: String): Flow<List<QuestionAttempt>> = flow {
         val path = "users/$userId/attempts"
         emitAll(
@@ -343,6 +389,7 @@ class MedPrepRepository(
                     "userId" to uid,
                     "displayName" to displayName,
                     "email" to email,
+                    "subscriptionPlan" to "free",
                     "targetExam" to MedPrepConstants.EXAM_TRACKS.first(),
                     "dailyGoal" to 25L,
                     "totalAnswered" to 0L,
@@ -368,7 +415,6 @@ class MedPrepRepository(
         dailyGoal: Long,
         contactEmail: String? = null,
         phoneNumber: String? = null,
-        subscriptionPlan: String? = null,
         scheduleDays: Long? = null
     ): Result<Unit> {
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}"
@@ -392,9 +438,6 @@ class MedPrepRepository(
             if (phoneNumber != null) {
                 payload["phoneNumber"] = phoneNumber.trim().take(30)
             }
-            if (subscriptionPlan != null && subscriptionPlan in setOf("free", "basic", "advance")) {
-                payload["subscriptionPlan"] = subscriptionPlan
-            }
             if (scheduleDays != null) {
                 payload["scheduleDays"] = scheduleDays.coerceIn(1L, 365L)
             }
@@ -411,12 +454,57 @@ class MedPrepRepository(
         }
     }
 
-    suspend fun updateSubscriptionPlan(planKey: String): Result<Unit> {
-        var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}"
+    // --- JAZZCASH SUBSCRIPTION REQUESTS & ADMIN PLAN ACCESS CONTROL ---
+
+    suspend fun submitSubscriptionRequest(input: SubscriptionRequestInput): Result<String> {
+        var docPath = "subscription_requests"
         return try {
             val uid = requireUserId()
-            val safePlan = planKey.trim().lowercase().takeIf { it in setOf("free", "basic", "advance") } ?: "free"
-            val docRef = db.collection("users").document(uid)
+            require(input.requestedPlan == SubscriptionPlanTier.BASIC || input.requestedPlan == SubscriptionPlanTier.ADVANCE) {
+                "Select Basic (PKR 499) or Advance (PKR 999)."
+            }
+            val cleanRef = input.transactionRef.trim().take(80)
+            require(cleanRef.length >= 4) {
+                "Enter your JazzCash Transaction ID (at least 4 characters)."
+            }
+            val cleanPhone = input.senderPhone.trim().take(30).takeIf { it.isNotEmpty() }
+            val cleanName = input.userName.trim().take(100).ifBlank { "Medical Student" }
+            val cleanEmail = input.userEmail.trim().take(160)
+
+            val docRef = db.collection("subscription_requests").document()
+            docPath = docRef.path
+            val payload = mapOf<String, Any?>(
+                "userId" to uid,
+                "userName" to cleanName,
+                "userEmail" to cleanEmail,
+                "requestedPlan" to input.requestedPlan.key,
+                "amountPkr" to input.requestedPlan.amountPkr.toLong(),
+                "paymentMethod" to MedPrepConstants.PAYMENT_METHOD_NAME,
+                "recipientIban" to MedPrepConstants.JAZZCASH_IBAN,
+                "transactionRef" to cleanRef,
+                "senderPhone" to cleanPhone,
+                "status" to "pending",
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            ).filterValues { it != null }
+            docRef.set(payload).await()
+            Result.success(docRef.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun adminSetUserSubscriptionPlan(targetUserId: String, planKey: String): Result<Unit> {
+        var docPath = "users/$targetUserId"
+        return try {
+            requireUserId()
+            require(targetUserId.isNotBlank()) { "Target user ID is required." }
+            val safePlan = planKey.trim().lowercase().takeIf { it in setOf("free", "basic", "advance") }
+                ?: throw IllegalArgumentException("Plan must be free, basic, or advance.")
+            val docRef = db.collection("users").document(targetUserId)
             docPath = docRef.path
             docRef.update(
                 mapOf(
@@ -429,6 +517,70 @@ class MedPrepRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun adminReviewSubscriptionRequest(
+        request: SubscriptionRequest,
+        approve: Boolean,
+        adminNote: String = ""
+    ): Result<Unit> {
+        var docPath = "subscription_requests/${request.id}"
+        return try {
+            val adminUid = requireUserId()
+            require(request.id.isNotBlank()) { "Request ID is required." }
+            require(request.userId.isNotBlank()) { "Student user ID is required." }
+
+            val newStatus = if (approve) "approved" else "rejected"
+            val cleanNote = adminNote.trim().take(240)
+            val batch = db.batch()
+            val reqRef = db.collection("subscription_requests").document(request.id)
+            batch.update(
+                reqRef,
+                mapOf(
+                    "status" to newStatus,
+                    "adminNote" to cleanNote,
+                    "reviewedBy" to adminUid,
+                    "reviewedAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+            if (approve) {
+                val safePlan = request.requestedPlan.trim().lowercase()
+                    .takeIf { it in setOf("basic", "advance") } ?: "basic"
+                val userRef = db.collection("users").document(request.userId)
+                batch.update(
+                    userRef,
+                    mapOf(
+                        "subscriptionPlan" to safePlan,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }
+            batch.commit().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteSubscriptionRequest(requestId: String): Result<Unit> {
+        var docPath = "subscription_requests/$requestId"
+        return try {
+            requireUserId()
+            require(requestId.isNotBlank()) { "Request ID is required." }
+            val docRef = db.collection("subscription_requests").document(requestId)
+            docPath = docRef.path
+            docRef.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }
     }

@@ -56,8 +56,10 @@ import com.example.auth.signOutGoogle
 import com.example.data.DeviceIdProvider
 import com.example.data.MedPrepConstants
 import com.example.data.MedPrepRepository
+import com.example.data.PlanEntitlements
 import com.example.data.StudentAccessStatus
 import com.example.data.StudyPost
+import com.example.data.SubscriptionPlanTier
 import com.example.data.TopicLinkResolver
 import com.example.data.UiState
 import com.example.notifications.MedPrepNotificationHelper
@@ -347,7 +349,11 @@ private fun AuthenticatedMedPrepShell(
             viewModel = viewModel,
             quiz = quiz,
             functionalSettings = functionalSettings,
-            onOpenInteractiveLesson = { post -> activeHtmlLesson = post to false }
+            onOpenInteractiveLesson = { post -> activeHtmlLesson = post to false },
+            onOpenPlansTab = {
+                viewModel.exitQuizSession()
+                activeMoreMenuTab = MoreMenuTab.PLANS
+            }
         )
         return
     }
@@ -480,12 +486,16 @@ private fun ActiveQuizHost(
     viewModel: MedPrepViewModel,
     quiz: ActiveQuizState,
     functionalSettings: AppFunctionalSettings,
-    onOpenInteractiveLesson: (StudyPost) -> Unit
+    onOpenInteractiveLesson: (StudyPost) -> Unit,
+    onOpenPlansTab: () -> Unit
 ) {
+    val profileState by viewModel.userProfileState.collectAsStateWithLifecycle()
     val attemptsMap by viewModel.attemptsMapState.collectAsStateWithLifecycle()
     val publishedPostsState by viewModel.publishedPostsState.collectAsStateWithLifecycle()
     val difficultQuestions by viewModel.difficultQuestionsState.collectAsStateWithLifecycle()
+    val studyNotes by viewModel.studyNotesState.collectAsStateWithLifecycle()
 
+    val activePlan = SubscriptionPlanTier.fromKey((profileState as? UiState.Success)?.data?.subscriptionPlan)
     val publishedPosts = remember(publishedPostsState) {
         (publishedPostsState as? UiState.Success)?.data.orEmpty()
     }
@@ -497,6 +507,8 @@ private fun ActiveQuizHost(
         quizState = quiz,
         attemptsMap = attemptsMap,
         publishedPosts = publishedPosts,
+        activePlan = activePlan,
+        currentNotesCount = studyNotes.size,
         difficultSourceIds = difficultSourceIds,
         showInstantReasonSetting = functionalSettings.showInstantReason,
         onSelectAnswer = viewModel::selectAnswer,
@@ -504,6 +516,7 @@ private fun ActiveQuizHost(
         onToggleDifficult = viewModel::markMcqAsDifficult,
         onSaveQuickNote = viewModel::saveStudyNote,
         onOpenInteractiveLesson = onOpenInteractiveLesson,
+        onOpenPlansTab = onOpenPlansTab,
         onNavigateTo = viewModel::navigateQuizTo,
         onPrevious = viewModel::previousQuestion,
         onNext = viewModel::nextQuestion,
@@ -530,12 +543,16 @@ private fun AdminPortalHost(
     val adminCoursesState by viewModel.adminCoursesState.collectAsStateWithLifecycle()
     val adminPostsState by viewModel.adminPostsState.collectAsStateWithLifecycle()
     val allAccessKeysState by viewModel.allAccessKeysState.collectAsStateWithLifecycle()
+    val allUsersState by viewModel.allUsersState.collectAsStateWithLifecycle()
+    val allSubscriptionRequestsState by viewModel.allSubscriptionRequestsState.collectAsStateWithLifecycle()
 
     AdminPanelScreen(
         studioQuestionsState = studioState,
         adminCoursesState = adminCoursesState,
         adminPostsState = adminPostsState,
         accessKeysState = allAccessKeysState,
+        allUsersState = allUsersState,
+        allSubscriptionRequestsState = allSubscriptionRequestsState,
         isDarkTheme = isDarkTheme,
         isMutating = isMutating,
         snackbarHostState = snackbarHostState,
@@ -559,6 +576,9 @@ private fun AdminPortalHost(
         onResetAccessKeyDevice = viewModel::resetAccessKeyDevice,
         onToggleAccessKeyStatus = viewModel::toggleAccessKeyStatus,
         onDeleteAccessKey = viewModel::deleteAccessKey,
+        onReviewSubscriptionRequest = viewModel::adminReviewSubscriptionRequest,
+        onSetUserPlan = viewModel::adminSetUserPlan,
+        onDeleteSubscriptionRequest = viewModel::adminDeleteSubscriptionRequest,
         onPostMessage = viewModel::postMessage,
         onPreviewStudentApp = onPreviewStudentApp,
         onSignOut = onSignOut
@@ -602,6 +622,9 @@ private fun StudentUnlockedHost(
     val downloadedPacks by viewModel.downloadedPacks.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
 
+    val activePlan = SubscriptionPlanTier.fromKey((profileState as? UiState.Success)?.data?.subscriptionPlan)
+    val maxPracticeCap = PlanEntitlements.maxPracticeQuestionsPerSession(activePlan)
+
     val corePublishedQuestions = remember(publishedState) {
         (publishedState as? UiState.Success)?.data
             ?.filter { MedPrepConstants.isCoreSubject(it.subject) }
@@ -612,6 +635,7 @@ private fun StudentUnlockedHost(
     if (activeMoreMenuTab != null) {
         val studyNotes by viewModel.studyNotesState.collectAsStateWithLifecycle()
         val difficultQuestions by viewModel.difficultQuestionsState.collectAsStateWithLifecycle()
+        val userSubscriptionRequests by viewModel.userSubscriptionRequestsState.collectAsStateWithLifecycle()
 
         MoreMenuHubScreen(
             initialTab = activeMoreMenuTab,
@@ -622,6 +646,7 @@ private fun StudentUnlockedHost(
             studyNotes = studyNotes,
             difficultQuestions = difficultQuestions,
             downloadedPacks = downloadedPacks,
+            userSubscriptionRequests = userSubscriptionRequests,
             activeAccessKey = activeKey,
             deviceId = deviceId,
             appearanceConfig = appearanceConfig,
@@ -633,10 +658,11 @@ private fun StudentUnlockedHost(
             snackbarHostState = snackbarHostState,
             onUpdateAppearance = onUpdateAppearance,
             onUpdateFunctionalSettings = onUpdateFunctionalSettings,
-            onSaveFullProfile = { name, exam, goal, email, phone, plan, days ->
-                viewModel.saveProfilePreferences(name, exam, goal, email, phone, plan, days)
+            onSaveFullProfile = { name, exam, goal, email, phone, days ->
+                viewModel.saveProfilePreferences(name, exam, goal, email, phone, days)
             },
-            onSelectPlan = viewModel::selectSubscriptionPlan,
+            onSubmitPaymentRequest = viewModel::submitSubscriptionPaymentRequest,
+            onCancelPendingRequest = viewModel::cancelSubscriptionRequest,
             onSaveScheduleDays = viewModel::saveScheduleDays,
             onStartStudy = { mode, subj, count ->
                 viewModel.startQuizSession(
@@ -807,6 +833,7 @@ private fun StudentUnlockedHost(
                                 (publishedPostsState as? UiState.Success)?.data.orEmpty()
                             }
                             StudentCoursesScreen(
+                                activePlan = activePlan,
                                 coursesState = publishedCoursesState,
                                 publishedPosts = publishedPosts,
                                 publishedQuestions = corePublishedQuestions,
@@ -816,11 +843,12 @@ private fun StudentUnlockedHost(
                                     viewModel.startQuizSession(
                                         mode = mode,
                                         subjectFilter = subj,
-                                        maxQuestions = count,
+                                        maxQuestions = minOf(count, maxPracticeCap),
                                         shuffleOptions = functionalSettings.shuffleOptions,
                                         examSecondsPerQuestion = functionalSettings.examSecondsPerQuestion
                                     )
                                 },
+                                onOpenPlansTab = { onSetActiveMoreMenuTab(MoreMenuTab.PLANS) },
                                 onPostMessage = viewModel::postMessage
                             )
                         }
@@ -828,11 +856,15 @@ private fun StudentUnlockedHost(
                         StudentTab.POSTS -> {
                             val publishedPostsState by viewModel.publishedPostsState.collectAsStateWithLifecycle()
                             PostsFeedScreen(
+                                activePlan = activePlan,
                                 postsState = publishedPostsState,
                                 publishedQuestions = corePublishedQuestions,
                                 isDarkTheme = isDarkTheme,
                                 onOpenInteractiveLesson = onOpenInteractiveLesson,
-                                onPracticeLinkedMcqs = viewModel::startLinkedMcqsForPost,
+                                onPracticeLinkedMcqs = { post ->
+                                    viewModel.startLinkedMcqsForPost(post, maxPracticeCap)
+                                },
+                                onOpenPlansTab = { onSetActiveMoreMenuTab(MoreMenuTab.PLANS) },
                                 onPostMessage = viewModel::postMessage
                             )
                         }

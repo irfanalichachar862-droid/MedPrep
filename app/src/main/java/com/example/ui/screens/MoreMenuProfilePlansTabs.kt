@@ -83,18 +83,29 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.AccountBalanceWallet
+import androidx.compose.material.icons.rounded.HourglassTop
+import androidx.compose.material.icons.rounded.Cancel
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import com.example.R
 import com.example.data.AccessKey
 import com.example.data.DeviceIdProvider
 import com.example.data.McqQuestion
 import com.example.data.MedPrepConstants
 import com.example.data.OfflinePackStorage
+import com.example.data.PlanEntitlements
 import com.example.data.QuestionAttempt
 import com.example.data.StudyMode
 import com.example.data.SubjectStats
 import com.example.data.SubscriptionPlanTier
+import com.example.data.SubscriptionRequest
 import com.example.data.UserProfile
+import com.example.ui.components.JazzCashPaymentAccountBanner
 import com.example.ui.components.LiquidGlassSurface
+import com.example.ui.components.PlanLockCard
+import com.example.ui.components.PlanTierBadge
 import com.example.ui.theme.AppAppearanceConfig
 import com.example.ui.theme.AppColorPalette
 import com.example.ui.theme.AppFontStyle
@@ -119,7 +130,7 @@ fun ProfileTabContent(
     deviceId: String,
     isAdminUser: Boolean,
     isMutating: Boolean,
-    onSaveFullProfile: (String, String, Long, String?, String?, String?, Long?) -> Unit,
+    onSaveFullProfile: (String, String, Long, String?, String?, Long?) -> Unit,
     onJumpToPlans: () -> Unit,
     onPostMessage: (String) -> Unit
 ) {
@@ -449,7 +460,6 @@ fun ProfileTabContent(
                                     dailyGoal,
                                     contactEmail.trim(),
                                     phoneNumber.trim(),
-                                    null,
                                     null
                                 )
                             }
@@ -470,17 +480,29 @@ fun ProfileTabContent(
     }
 }
 
-// --- TAB 2: PLANS (FREE, BASIC & ADVANCE) ---
+// --- TAB 2: PLANS (FREE, BASIC PKR 499 & ADVANCE PKR 999 VIA JAZZCASH) ---
 
 @Composable
 fun PlansTabContent(
+    profile: UserProfile?,
     currentPlanKey: String,
+    userRequests: List<SubscriptionRequest>,
     isMutating: Boolean,
-    onSelectPlan: (String, String) -> Unit,
+    onSubmitPaymentRequest: (SubscriptionPlanTier, String, String, String, String, () -> Unit) -> Unit,
+    onCancelPendingRequest: (String) -> Unit,
     onPostMessage: (String) -> Unit
 ) {
     val clipboard = LocalClipboardManager.current
+    val ext = LocalMedPrepColors.current
     val activeTier = SubscriptionPlanTier.fromKey(currentPlanKey)
+    var checkoutTier by remember { mutableStateOf<SubscriptionPlanTier?>(null) }
+
+    val pendingRequest = remember(userRequests) {
+        userRequests.firstOrNull { it.status == "pending" }
+    }
+    val latestReviewed = remember(userRequests) {
+        userRequests.firstOrNull { it.status != "pending" }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -488,23 +510,128 @@ fun PlansTabContent(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Subscription Plans",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    PlanTierBadge(tier = activeTier)
+                }
                 Text(
-                    text = "Subscription Plans",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Choose Free, Basic, or Advance. Your selected plan saves to your profile.",
+                    text = "Pay via JazzCash to unlock Basic (PKR 499/mo) or Advance (PKR 999/mo). Admin verifies your payment and activates your plan.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
+        // JazzCash IBAN Account Details Banner
+        item {
+            JazzCashPaymentAccountBanner(
+                onCopied = { onPostMessage("Copied JazzCash IBAN: ${MedPrepConstants.JAZZCASH_IBAN}") }
+            )
+        }
+
+        // Pending Payment Verification Status Card
+        if (pendingRequest != null) {
+            item {
+                val reqTier = SubscriptionPlanTier.fromKey(pendingRequest.requestedPlan)
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = ext.warningContainer.copy(alpha = 0.65f)),
+                    border = BorderStroke(1.2.dp, ext.warning.copy(alpha = 0.6f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("plan_pending_request_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.HourglassTop,
+                                contentDescription = null,
+                                tint = ext.onWarningContainer,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Verification Pending — ${reqTier.title} (PKR ${pendingRequest.amountPkr})",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ext.onWarningContainer
+                                )
+                                Text(
+                                    text = "JazzCash TID: ${pendingRequest.transactionRef} • Waiting for Admin approval",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ext.onWarningContainer.copy(alpha = 0.88f)
+                                )
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = { onCancelPendingRequest(pendingRequest.id) },
+                            enabled = !isMutating,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp)
+                                .testTag("plan_cancel_pending_button")
+                        ) {
+                            Text("Cancel Pending Request")
+                        }
+                    }
+                }
+            }
+        } else if (latestReviewed != null && latestReviewed.status == "rejected") {
+            item {
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Cancel,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Previous Payment Rejected (TID: ${latestReviewed.transactionRef})",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = latestReviewed.adminNote?.takeIf { it.isNotBlank() }
+                                    ?: "Please check your JazzCash TID and submit again.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         items(SubscriptionPlanTier.entries, key = { it.key }) { tier ->
             val isSelected = tier == activeTier
+            val isIncludedInHigher = activeTier.level > tier.level
             val isHighlight = tier == SubscriptionPlanTier.ADVANCE
+            val hasPendingForThis = pendingRequest?.requestedPlan.equals(tier.key, ignoreCase = true)
 
             LiquidGlassSurface(
                 shape = MaterialTheme.shapes.extraLarge,
@@ -585,34 +712,61 @@ fun PlansTabContent(
                         }
                     }
 
-                    if (isSelected) {
-                        OutlinedButton(
-                            onClick = { },
-                            enabled = false,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .testTag("plan_active_${tier.key}")
-                        ) {
-                            Text("Currently Active (${tier.title})")
+                    when {
+                        isSelected -> {
+                            OutlinedButton(
+                                onClick = { },
+                                enabled = false,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                                    .testTag("plan_active_${tier.key}")
+                            ) {
+                                Text("Currently Active (${tier.title})")
+                            }
                         }
-                    } else {
-                        Button(
-                            onClick = { onSelectPlan(tier.key, tier.title) },
-                            enabled = !isMutating,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("plan_select_${tier.key}")
-                        ) {
-                            Text("Switch to ${tier.title} Plan")
+                        tier == SubscriptionPlanTier.FREE || isIncludedInHigher -> {
+                            OutlinedButton(
+                                onClick = { },
+                                enabled = false,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                            ) {
+                                Text("Included in Your ${activeTier.title} Plan")
+                            }
+                        }
+                        hasPendingForThis -> {
+                            OutlinedButton(
+                                onClick = { },
+                                enabled = false,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                            ) {
+                                Text("Payment Submitted — Pending Verification")
+                            }
+                        }
+                        else -> {
+                            Button(
+                                onClick = { checkoutTier = tier },
+                                enabled = !isMutating,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("plan_buy_${tier.key}")
+                            ) {
+                                Icon(Icons.Rounded.AccountBalanceWallet, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Buy ${tier.title} — PKR ${tier.amountPkr} (JazzCash)")
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Admin Contact for Plan Keys
+        // Admin Contact for Payment Verification & Support
         item {
             Card(
                 shape = MaterialTheme.shapes.large,
@@ -626,11 +780,11 @@ fun PlansTabContent(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Need an Access Key for Basic / Advance?",
+                            text = "Plan Activation & Billing Support",
                             style = MaterialTheme.typography.titleSmall
                         )
                         Text(
-                            text = "Contact Admin: ${MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL}",
+                            text = "Admin: ${MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -649,6 +803,103 @@ fun PlansTabContent(
 
         item { Spacer(modifier = Modifier.height(20.dp)) }
     }
+
+    // JazzCash Payment Verification Dialog
+    val buyingTier = checkoutTier
+    if (buyingTier != null) {
+        JazzCashCheckoutDialog(
+            tier = buyingTier,
+            defaultPhone = profile?.phoneNumber.orEmpty(),
+            isSubmitting = isMutating,
+            onCopyIban = { onPostMessage("Copied JazzCash IBAN: ${MedPrepConstants.JAZZCASH_IBAN}") },
+            onDismiss = { checkoutTier = null },
+            onSubmit = { tid, senderPhone ->
+                onSubmitPaymentRequest(
+                    buyingTier,
+                    tid,
+                    senderPhone,
+                    profile?.displayName ?: "Medical Student",
+                    profile?.email ?: profile?.contactEmail.orEmpty()
+                ) {
+                    checkoutTier = null
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun JazzCashCheckoutDialog(
+    tier: SubscriptionPlanTier,
+    defaultPhone: String,
+    isSubmitting: Boolean,
+    onCopyIban: () -> Unit,
+    onDismiss: () -> Unit,
+    onSubmit: (String, String) -> Unit
+) {
+    var transactionRef by remember { mutableStateOf("") }
+    var senderPhone by remember { mutableStateOf(defaultPhone) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Pay for ${tier.title} Plan")
+                Text(
+                    text = "Amount: PKR ${tier.amountPkr} / month via JazzCash",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                JazzCashPaymentAccountBanner(onCopied = onCopyIban)
+
+                Text(
+                    text = "Step 1: Send PKR ${tier.amountPkr} via JazzCash / Raast / Bank transfer to the IBAN above.\nStep 2: Enter your JazzCash Transaction ID (TID) below for Admin verification.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                OutlinedTextField(
+                    value = transactionRef,
+                    onValueChange = { transactionRef = it.take(80) },
+                    label = { Text("JazzCash Transaction ID (TID) *") },
+                    placeholder = { Text("e.g. JC-8492019482") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("jazzcash_tid_input")
+                )
+
+                OutlinedTextField(
+                    value = senderPhone,
+                    onValueChange = { senderPhone = it.take(30) },
+                    label = { Text("Your JazzCash Mobile No. (Optional)") },
+                    placeholder = { Text("e.g. 0300-1234567") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("jazzcash_sender_phone_input")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSubmit(transactionRef.trim(), senderPhone.trim()) },
+                enabled = !isSubmitting && transactionRef.trim().length >= 4,
+                modifier = Modifier.testTag("jazzcash_submit_payment_button")
+            ) {
+                Text(if (isSubmitting) "Submitting…" else "Submit Payment")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 // --- TAB 3: APPEARANCE (DARK/LIGHT/SYSTEM, SUGGESTED COLOR PALETTES, TEXT STYLE & FONT SIZE) ---
@@ -656,15 +907,22 @@ fun PlansTabContent(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AppearanceTabContent(
+    activePlan: SubscriptionPlanTier,
     appearance: AppAppearanceConfig,
-    onUpdateAppearance: (AppAppearanceConfig) -> Unit
+    onUpdateAppearance: (AppAppearanceConfig) -> Unit,
+    onUpgradeToAdvance: () -> Unit,
+    onPostMessage: (String) -> Unit
 ) {
+    val canUsePremium = PlanEntitlements.canUsePremiumAppearance(activePlan)
+    val defaultPalette = AppColorPalette.entries.first()
+    val defaultFont = AppFontStyle.entries.first()
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. Theme Mode
+        // 1. Theme Mode (Free for all plans)
         item {
             LiquidGlassSurface(shape = MaterialTheme.shapes.large) {
                 Column(
@@ -726,7 +984,7 @@ fun AppearanceTabContent(
             }
         }
 
-        // 2. Suggested Color Palettes
+        // 2. Suggested Color Palettes (Default free, premium palettes Advance)
         item {
             LiquidGlassSurface(shape = MaterialTheme.shapes.large) {
                 Column(
@@ -734,17 +992,34 @@ fun AppearanceTabContent(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(Icons.Rounded.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text("Suggested Color Palettes", style = MaterialTheme.typography.titleMedium)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Rounded.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Text("Suggested Color Palettes", style = MaterialTheme.typography.titleMedium)
+                        }
+                        if (!canUsePremium) {
+                            PlanTierBadge(tier = SubscriptionPlanTier.ADVANCE)
+                        }
                     }
 
                     AppColorPalette.entries.forEach { palette ->
                         val selected = appearance.colorPalette == palette
+                        val locked = !canUsePremium && palette != defaultPalette
                         Surface(
-                            onClick = { onUpdateAppearance(appearance.copy(colorPalette = palette)) },
+                            onClick = {
+                                if (locked) {
+                                    onPostMessage("${palette.label} palette requires Advance Plan (PKR 999/mo).")
+                                    onUpgradeToAdvance()
+                                } else {
+                                    onUpdateAppearance(appearance.copy(colorPalette = palette))
+                                }
+                            },
                             shape = MaterialTheme.shapes.medium,
                             color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
                             else MaterialTheme.colorScheme.surface,
@@ -774,7 +1049,7 @@ fun AppearanceTabContent(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(palette.label, style = MaterialTheme.typography.titleSmall)
                                     Text(
-                                        palette.subtitle,
+                                        if (locked) "Advance Plan • ${palette.subtitle}" else palette.subtitle,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -785,6 +1060,13 @@ fun AppearanceTabContent(
                                         contentDescription = "Selected palette",
                                         tint = MaterialTheme.colorScheme.primary
                                     )
+                                } else if (locked) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Lock,
+                                        contentDescription = "Advance plan required",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                             }
                         }
@@ -793,7 +1075,7 @@ fun AppearanceTabContent(
             }
         }
 
-        // 3. Text Style & Font Family
+        // 3. Text Style & Font Family (Custom fonts Advance)
         item {
             LiquidGlassSurface(shape = MaterialTheme.shapes.large) {
                 Column(
@@ -801,20 +1083,40 @@ fun AppearanceTabContent(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(Icons.Rounded.TextFields, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text("Font & Text Style", style = MaterialTheme.typography.titleMedium)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Rounded.TextFields, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Text("Font & Text Style", style = MaterialTheme.typography.titleMedium)
+                        }
+                        if (!canUsePremium) {
+                            PlanTierBadge(tier = SubscriptionPlanTier.ADVANCE)
+                        }
                     }
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         AppFontStyle.entries.forEach { style ->
+                            val locked = !canUsePremium && style != defaultFont
                             FilterChip(
                                 selected = appearance.fontStyle == style,
-                                onClick = { onUpdateAppearance(appearance.copy(fontStyle = style)) },
+                                onClick = {
+                                    if (locked) {
+                                        onPostMessage("${style.label} font requires Advance Plan (PKR 999/mo).")
+                                        onUpgradeToAdvance()
+                                    } else {
+                                        onUpdateAppearance(appearance.copy(fontStyle = style))
+                                    }
+                                },
+                                leadingIcon = if (locked) {
+                                    { Icon(Icons.Rounded.Lock, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                } else null,
                                 label = { Text(style.label) },
                                 modifier = Modifier.testTag("appearance_font_${style.key}")
                             )
@@ -889,13 +1191,17 @@ fun AppearanceTabContent(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ProgressScheduleTabContent(
+    activePlan: SubscriptionPlanTier,
     profile: UserProfile?,
     publishedQuestions: List<McqQuestion>,
     attemptsMap: Map<String, QuestionAttempt>,
     isDarkTheme: Boolean,
     onSaveScheduleDays: (Long) -> Unit,
-    onStartStudy: (StudyMode, String?, Int) -> Unit
+    onStartStudy: (StudyMode, String?, Int) -> Unit,
+    onUpgradeToBasic: () -> Unit
 ) {
+    val canUseSchedule = PlanEntitlements.canUseStudySchedule(activePlan)
+    val maxPracticeCap = PlanEntitlements.maxPracticeQuestionsPerSession(activePlan)
     var targetDays by remember(profile?.scheduleDays) {
         mutableLongStateOf((profile?.scheduleDays ?: 30L).coerceIn(1L, 365L))
     }
@@ -920,118 +1226,128 @@ fun ProgressScheduleTabContent(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Smart Cover-in-N-Days Study Schedule Planner
+        // Smart Cover-in-N-Days Study Schedule Planner (Basic+ Plan)
         item {
-            LiquidGlassSurface(shape = MaterialTheme.shapes.extraLarge) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            if (!canUseSchedule) {
+                PlanLockCard(
+                    requiredTier = SubscriptionPlanTier.BASIC,
+                    featureTitle = "Smart N-Day Study Schedule",
+                    description = "Generate a custom daily quota across all 5 subjects to finish your syllabus in 7, 15, 30, or any number of days.",
+                    onUpgradeClick = onUpgradeToBasic,
+                    testTag = "schedule_upgrade_basic_button"
+                )
+            } else {
+                LiquidGlassSurface(shape = MaterialTheme.shapes.extraLarge) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Icon(Icons.Rounded.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Column {
-                            Text("Syllabus Schedule Planner", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "Cover all remaining MCQs in your chosen number of days",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    // Quick Day Presets
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf(7L, 15L, 30L, 45L, 60L, 90L).forEach { days ->
-                            FilterChip(
-                                selected = targetDays == days,
-                                onClick = { targetDays = days },
-                                label = { Text("$days Days") }
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Custom Days:", style = MaterialTheme.typography.titleSmall)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { targetDays = (targetDays - 1L).coerceAtLeast(1L) }) {
-                                Icon(Icons.Rounded.Remove, contentDescription = "Decrease days")
-                            }
-                            Text(
-                                text = "$targetDays days",
-                                style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
-                                fontWeight = FontWeight.Bold
-                            )
-                            IconButton(onClick = { targetDays = (targetDays + 1L).coerceAtMost(365L) }) {
-                                Icon(Icons.Rounded.Add, contentDescription = "Increase days")
-                            }
-                        }
-                    }
-
-                    // Calculated Daily Plan Box
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = if (totalRemaining == 0) {
-                                    "All $totalBank published MCQs practiced! Ready for full Revision & Retests."
-                                } else {
-                                    "Daily Target: $dailyTotalTarget MCQs / day  ($totalRemaining left ÷ $targetDays days)"
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            subjectStats.forEach { stat ->
-                                val rem = (stat.totalQuestions - stat.answeredCount).coerceAtLeast(0)
-                                val perDay = if (rem == 0) 0 else ceil(rem.toDouble() / targetDays.toDouble()).toInt().coerceAtLeast(1)
+                            Icon(Icons.Rounded.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Column {
+                                Text("Syllabus Schedule Planner", style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    text = "• ${stat.subject}: $perDay/day ($rem remaining of ${stat.totalQuestions})",
+                                    "Cover all remaining MCQs in your chosen number of days",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                    }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { onSaveScheduleDays(targetDays) },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(46.dp)
-                                .testTag("schedule_save_days_button")
+                        // Quick Day Presets
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("Save $targetDays-Day Plan")
+                            listOf(7L, 15L, 30L, 45L, 60L, 90L).forEach { days ->
+                                FilterChip(
+                                    selected = targetDays == days,
+                                    onClick = { targetDays = days },
+                                    label = { Text("$days Days") }
+                                )
+                            }
                         }
-                        Button(
-                            onClick = { onStartStudy(StudyMode.PRACTICE, null, dailyTotalTarget.coerceIn(10, 40)) },
-                            enabled = totalBank > 0,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(46.dp)
-                                .testTag("schedule_start_today_button")
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Start Today")
+                            Text("Custom Days:", style = MaterialTheme.typography.titleSmall)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { targetDays = (targetDays - 1L).coerceAtLeast(1L) }) {
+                                    Icon(Icons.Rounded.Remove, contentDescription = "Decrease days")
+                                }
+                                Text(
+                                    text = "$targetDays days",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
+                                    fontWeight = FontWeight.Bold
+                                )
+                                IconButton(onClick = { targetDays = (targetDays + 1L).coerceAtMost(365L) }) {
+                                    Icon(Icons.Rounded.Add, contentDescription = "Increase days")
+                                }
+                            }
+                        }
+
+                        // Calculated Daily Plan Box
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = if (totalRemaining == 0) {
+                                        "All $totalBank published MCQs practiced! Ready for full Revision & Retests."
+                                    } else {
+                                        "Daily Target: $dailyTotalTarget MCQs / day  ($totalRemaining left ÷ $targetDays days)"
+                                    },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                subjectStats.forEach { stat ->
+                                    val rem = (stat.totalQuestions - stat.answeredCount).coerceAtLeast(0)
+                                    val perDay = if (rem == 0) 0 else ceil(rem.toDouble() / targetDays.toDouble()).toInt().coerceAtLeast(1)
+                                    Text(
+                                        text = "• ${stat.subject}: $perDay/day ($rem remaining of ${stat.totalQuestions})",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { onSaveScheduleDays(targetDays) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .testTag("schedule_save_days_button")
+                            ) {
+                                Text("Save $targetDays-Day Plan")
+                            }
+                            Button(
+                                onClick = { onStartStudy(StudyMode.PRACTICE, null, dailyTotalTarget.coerceIn(10, maxPracticeCap)) },
+                                enabled = totalBank > 0,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .testTag("schedule_start_today_button")
+                            ) {
+                                Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Start Today")
+                            }
                         }
                     }
                 }
@@ -1090,7 +1406,7 @@ fun ProgressScheduleTabContent(
                             )
                         }
                         Surface(
-                            onClick = { onStartStudy(StudyMode.PRACTICE, stat.subject, dailyQuota.coerceIn(10, 30)) },
+                            onClick = { onStartStudy(StudyMode.PRACTICE, stat.subject, dailyQuota.coerceIn(10, maxPracticeCap)) },
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.primaryContainer
                         ) {

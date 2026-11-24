@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Lightbulb
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Refresh
@@ -77,10 +78,12 @@ import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.PriorityHigh
 import com.example.data.StudyNoteDraft
 import com.example.data.McqQuestion
+import com.example.data.PlanEntitlements
 import com.example.data.QuestionAttempt
 import com.example.data.ShuffledQuestion
 import com.example.data.StudyMode
 import com.example.data.StudyPost
+import com.example.data.SubscriptionPlanTier
 import com.example.data.TopicLinkResolver
 import com.example.ui.components.FormulaText
 import com.example.ui.theme.LocalMedPrepColors
@@ -94,6 +97,8 @@ fun QuizSessionScreen(
     quizState: ActiveQuizState,
     attemptsMap: Map<String, QuestionAttempt>,
     publishedPosts: List<StudyPost>,
+    activePlan: SubscriptionPlanTier = SubscriptionPlanTier.FREE,
+    currentNotesCount: Int = 0,
     difficultSourceIds: Set<String> = emptySet(),
     showInstantReasonSetting: Boolean = true,
     onSelectAnswer: (ShuffledQuestion, String) -> Unit,
@@ -101,6 +106,7 @@ fun QuizSessionScreen(
     onToggleDifficult: (McqQuestion) -> Unit = {},
     onSaveQuickNote: (StudyNoteDraft, () -> Unit) -> Unit = { _, done -> done() },
     onOpenInteractiveLesson: (StudyPost) -> Unit,
+    onOpenPlansTab: () -> Unit = {},
     onNavigateTo: (Int) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -131,6 +137,9 @@ fun QuizSessionScreen(
         (quizState.mode != StudyMode.EXAM && selectedDisplayLetter != null && showInstantReasonSetting)
     val isBookmarked = attemptsMap[question.id]?.bookmarked == true
     val isMarkedDifficult = question.id in difficultSourceIds
+    val canUseDifficultVault = PlanEntitlements.canUseDifficultVault(activePlan)
+    val maxNotesAllowed = PlanEntitlements.maxStudyNotes(activePlan)
+    val canOpenInteractiveHtml = PlanEntitlements.canOpenInteractiveHtml(activePlan)
     val linkedPost = remember(question.id, question.linkedPostId, question.subject, question.topic, publishedPosts) {
         TopicLinkResolver.findLinkedPost(question, publishedPosts)
     }
@@ -194,18 +203,32 @@ fun QuizSessionScreen(
                     }
 
                     IconButton(
-                        onClick = { onToggleDifficult(question) },
+                        onClick = {
+                            if (canUseDifficultVault) {
+                                onToggleDifficult(question)
+                            } else {
+                                onPostMessage("Difficult Exam Vault requires Basic Plan (PKR 499/mo via JazzCash).")
+                                onOpenPlansTab()
+                            }
+                        },
                         modifier = Modifier.testTag("quiz_difficult_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.PriorityHigh,
+                            imageVector = if (canUseDifficultVault) Icons.Rounded.PriorityHigh else Icons.Rounded.Lock,
                             contentDescription = "Mark as difficult exam question",
-                            tint = if (isMarkedDifficult) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = if (isMarkedDifficult && canUseDifficultVault) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
                     IconButton(
-                        onClick = { showQuickNoteDialog = true },
+                        onClick = {
+                            if (currentNotesCount >= maxNotesAllowed) {
+                                onPostMessage("Free Plan supports up to $maxNotesAllowed study notes. Upgrade to Basic (PKR 499/mo) for unlimited notes!")
+                                onOpenPlansTab()
+                            } else {
+                                showQuickNoteDialog = true
+                            }
+                        },
                         modifier = Modifier.testTag("quiz_add_note_button")
                     ) {
                         Icon(
@@ -382,7 +405,14 @@ fun QuizSessionScreen(
                 // Linked Interactive Topic Explanation Shortcut (available anytime during Practice/Review)
                 if (linkedPost != null && linkedPost.hasInteractiveHtml && quizState.mode != StudyMode.EXAM) {
                     Surface(
-                        onClick = { onOpenInteractiveLesson(linkedPost) },
+                        onClick = {
+                            if (canOpenInteractiveHtml) {
+                                onOpenInteractiveLesson(linkedPost)
+                            } else {
+                                onPostMessage("Interactive HTML topic lessons require Advance Plan (PKR 999/mo via JazzCash).")
+                                onOpenPlansTab()
+                            }
+                        },
                         shape = MaterialTheme.shapes.medium,
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
@@ -396,19 +426,27 @@ fun QuizSessionScreen(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Code,
+                                imageVector = if (canOpenInteractiveHtml) Icons.Rounded.Code else Icons.Rounded.Lock,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(18.dp)
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Interactive Topic Lesson Linked",
+                                    text = if (canOpenInteractiveHtml) {
+                                        "Interactive Topic Lesson Linked"
+                                    } else {
+                                        "Interactive Topic Lesson (Advance Plan)"
+                                    },
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                                 Text(
-                                    text = "Tap to understand '${linkedPost.title}' visually",
+                                    text = if (canOpenInteractiveHtml) {
+                                        "Tap to understand '${linkedPost.title}' visually"
+                                    } else {
+                                        "Upgrade to Advance (PKR 999/mo) to open '${linkedPost.title}'"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                                 )
@@ -610,7 +648,12 @@ fun QuizSessionScreen(
                                     Button(
                                         onClick = {
                                             if (linkedPost.hasInteractiveHtml) {
-                                                onOpenInteractiveLesson(linkedPost)
+                                                if (canOpenInteractiveHtml) {
+                                                    onOpenInteractiveLesson(linkedPost)
+                                                } else {
+                                                    onPostMessage("Interactive HTML topic lessons require Advance Plan (PKR 999/mo via JazzCash).")
+                                                    onOpenPlansTab()
+                                                }
                                             } else if (!linkedPost.webUrl.isNullOrBlank()) {
                                                 openExternalLink(context, linkedPost.webUrl, onPostMessage)
                                             } else {
@@ -619,7 +662,13 @@ fun QuizSessionScreen(
                                         },
                                         modifier = Modifier.testTag("quiz_open_linked_lesson_button")
                                     ) {
-                                        Text("Explain")
+                                        if (linkedPost.hasInteractiveHtml && !canOpenInteractiveHtml) {
+                                            Icon(Icons.Rounded.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Advance")
+                                        } else {
+                                            Text("Explain")
+                                        }
                                     }
                                 }
                             }

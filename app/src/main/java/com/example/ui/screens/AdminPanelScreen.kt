@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.automirrored.rounded.FactCheck
 import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.rounded.AccountBalanceWallet
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddCircleOutline
 import androidx.compose.material.icons.rounded.Analytics
@@ -110,8 +111,10 @@ import com.example.data.QuestionDraftInput
 import com.example.data.SpreadsheetMcqReader
 import com.example.data.StudyPost
 import com.example.data.StudyPostDraftInput
+import com.example.data.SubscriptionRequest
 import com.example.data.TopicLinkResolver
 import com.example.data.UiState
+import com.example.data.UserProfile
 import com.example.ui.components.FormulaText
 import com.example.ui.components.LiquidGlassScrollableTabBar
 import com.example.ui.components.LiquidGlassTabItem
@@ -121,6 +124,7 @@ import com.example.ui.theme.subjectVisualFor
 
 private enum class AdminSection(val labelRes: Int, val icon: ImageVector, val tag: String) {
     OVERVIEW(R.string.admin_tab_overview, Icons.Rounded.Analytics, "admin_tab_overview"),
+    PLANS(R.string.admin_tab_plans, Icons.Rounded.AccountBalanceWallet, "admin_tab_plans"),
     COURSES(R.string.admin_tab_courses, Icons.Rounded.School, "admin_tab_courses"),
     MCQS(R.string.admin_tab_mcqs, Icons.AutoMirrored.Rounded.FactCheck, "admin_tab_mcqs"),
     EXCEL(R.string.admin_tab_excel, Icons.Rounded.TableView, "admin_tab_excel"),
@@ -135,6 +139,8 @@ fun AdminPanelScreen(
     adminCoursesState: UiState<List<CourseItem>>,
     adminPostsState: UiState<List<StudyPost>>,
     accessKeysState: UiState<List<AccessKey>>,
+    allUsersState: UiState<List<UserProfile>>,
+    allSubscriptionRequestsState: UiState<List<SubscriptionRequest>>,
     isDarkTheme: Boolean,
     isMutating: Boolean,
     snackbarHostState: SnackbarHostState,
@@ -158,6 +164,9 @@ fun AdminPanelScreen(
     onResetAccessKeyDevice: (String) -> Unit,
     onToggleAccessKeyStatus: (AccessKey) -> Unit,
     onDeleteAccessKey: (String) -> Unit,
+    onReviewSubscriptionRequest: (SubscriptionRequest, Boolean, String) -> Unit,
+    onSetUserPlan: (String, String, String) -> Unit,
+    onDeleteSubscriptionRequest: (String) -> Unit,
     onPostMessage: (String) -> Unit,
     onPreviewStudentApp: () -> Unit,
     onSignOut: () -> Unit
@@ -168,6 +177,8 @@ fun AdminPanelScreen(
     val courses = (adminCoursesState as? UiState.Success)?.data.orEmpty()
     val posts = (adminPostsState as? UiState.Success)?.data.orEmpty()
     val keys = (accessKeysState as? UiState.Success)?.data.orEmpty()
+    val pendingPlanRequestsCount = (allSubscriptionRequestsState as? UiState.Success)?.data
+        ?.count { it.status == "pending" } ?: 0
 
     var activeSection by rememberSaveable { mutableStateOf(AdminSection.OVERVIEW) }
     var editingQuestion by remember { mutableStateOf<McqQuestion?>(null) }
@@ -406,12 +417,14 @@ fun AdminPanelScreen(
                     coursesCount = courses.size,
                     postsCount = posts.size,
                     activeKeysCount = keys.count { it.status == "active" },
+                    pendingPlanRequestsCount = pendingPlanRequestsCount,
                     isDarkTheme = isDarkTheme,
                     isMutating = isMutating,
                     onAddMcq = {
                         editingQuestion = null
                         showMcqEditor = true
                     },
+                    onOpenPlans = { activeSection = AdminSection.PLANS },
                     onOpenCourses = { activeSection = AdminSection.COURSES },
                     onOpenExcelUpload = { activeSection = AdminSection.EXCEL },
                     onOpenPosts = { activeSection = AdminSection.POSTS },
@@ -421,6 +434,16 @@ fun AdminPanelScreen(
                     onLoadStarterPack = onLoadStarterPack,
                     onExportBank = { exportBankLauncher.launch("medprep_question_bank.csv") },
                     onDownloadTemplate = { downloadTemplateLauncher.launch("medprep_excel_template.csv") }
+                )
+
+                AdminSection.PLANS -> AdminSubscriptionsManagerTab(
+                    allUsersState = allUsersState,
+                    allRequestsState = allSubscriptionRequestsState,
+                    isMutating = isMutating,
+                    onReviewRequest = onReviewSubscriptionRequest,
+                    onSetUserPlan = onSetUserPlan,
+                    onDeleteRequest = onDeleteSubscriptionRequest,
+                    onPostMessage = onPostMessage
                 )
 
                 AdminSection.COURSES -> AdminCoursesManagerTab(
@@ -665,9 +688,11 @@ private fun AdminOverviewTab(
     coursesCount: Int,
     postsCount: Int,
     activeKeysCount: Int,
+    pendingPlanRequestsCount: Int,
     isDarkTheme: Boolean,
     isMutating: Boolean,
     onAddMcq: () -> Unit,
+    onOpenPlans: () -> Unit,
     onOpenCourses: () -> Unit,
     onOpenExcelUpload: () -> Unit,
     onOpenPosts: () -> Unit,
@@ -812,6 +837,28 @@ private fun AdminOverviewTab(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Publish ($draftCount)")
                         }
+                    }
+
+                    Button(
+                        onClick = onOpenPlans,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (pendingPlanRequestsCount > 0) extendedColors.warning else MaterialTheme.colorScheme.secondary,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("admin_overview_plans_btn")
+                    ) {
+                        Icon(Icons.Rounded.AccountBalanceWallet, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (pendingPlanRequestsCount > 0) {
+                                "Manage Subscriptions & JazzCash ($pendingPlanRequestsCount Pending)"
+                            } else {
+                                "Manage Student Plans & JazzCash Access"
+                            }
+                        )
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {

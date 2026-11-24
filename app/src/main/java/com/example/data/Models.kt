@@ -76,6 +76,8 @@ enum class SubscriptionPlanTier(
     val key: String,
     val title: String,
     val priceTag: String,
+    val amountPkr: Int,
+    val level: Int,
     val badge: String,
     val features: List<String>
 ) {
@@ -83,38 +85,46 @@ enum class SubscriptionPlanTier(
         key = "free",
         title = "Free",
         priceTag = "PKR 0 / mo",
+        amountPkr = 0,
+        level = 0,
         badge = "Starter",
         features = listOf(
-            "Daily practice across all 5 core subjects",
-            "Randomized A–D options & instant Reasons",
-            "Basic subject progress overview",
-            "Personal notes & highlights"
+            "Quick Practice across all 5 subjects (up to 10 MCQs/session)",
+            "Randomized A–D options, instant Reasons & Mistake Review",
+            "Bookmarks, Posts notes & YouTube video links",
+            "Basic subject progress overview & up to 5 Study Notes",
+            "Light & Dark theme modes"
         )
     ),
     BASIC(
         key = "basic",
         title = "Basic",
-        priceTag = "PKR 950 / mo",
+        priceTag = "PKR 499 / mo",
+        amountPkr = 499,
+        level = 1,
         badge = "Popular",
         features = listOf(
-            "Everything in Free + Timed Exam simulations",
+            "Everything in Free + Unlimited Practice MCQs per session",
+            "Timed Exam simulations with countdown & full retest",
             "PDF MCQ downloads with Answer Key & Reasons",
-            "Offline interactive downloaded MCQ packs",
-            "Smart study schedule generator (cover in N days)",
-            "Difficult Questions exam vault & practice"
+            "Interactive Offline Downloaded MCQ packs",
+            "Smart N-day Study Schedule & Difficult Questions Vault",
+            "Unlimited Highlights & Study Notes"
         )
     ),
     ADVANCE(
         key = "advance",
         title = "Advance",
-        priceTag = "PKR 1,950 / mo",
-        badge = "Complete",
+        priceTag = "PKR 999 / mo",
+        amountPkr = 999,
+        level = 2,
+        badge = "All Access",
         features = listOf(
-            "Everything in Basic + All Interactive HTML lessons",
-            "Two-way Topic ↔ MCQ deep links & YouTube lectures",
-            "Exact Chemistry formula structural sheets in PDF",
+            "Everything in Basic + All Interactive HTML Topic Lessons",
+            "Full Courses syllabus, linked lessons & Course MCQ Drills",
             "Full JSON Backup Export & Restore",
-            "Priority 1-device Access Key support from Admin"
+            "All Premium Color Palettes & Custom Font Styles",
+            "Two-way Topic ↔ MCQ deep links & priority Admin support"
         )
     );
 
@@ -123,6 +133,55 @@ enum class SubscriptionPlanTier(
             entries.firstOrNull { it.key.equals(raw, ignoreCase = true) } ?: FREE
     }
 }
+
+object PlanEntitlements {
+    fun hasBasic(plan: SubscriptionPlanTier): Boolean = plan.level >= SubscriptionPlanTier.BASIC.level
+    fun hasAdvance(plan: SubscriptionPlanTier): Boolean = plan.level >= SubscriptionPlanTier.ADVANCE.level
+
+    fun maxPracticeQuestionsPerSession(plan: SubscriptionPlanTier): Int =
+        if (hasBasic(plan)) 50 else 10
+
+    fun maxStudyNotes(plan: SubscriptionPlanTier): Int =
+        if (hasBasic(plan)) Int.MAX_VALUE else 5
+
+    fun canUseTimedExam(plan: SubscriptionPlanTier): Boolean = hasBasic(plan)
+    fun canDownloadPdfAndOfflinePacks(plan: SubscriptionPlanTier): Boolean = hasBasic(plan)
+    fun canUseStudySchedule(plan: SubscriptionPlanTier): Boolean = hasBasic(plan)
+    fun canUseDifficultVault(plan: SubscriptionPlanTier): Boolean = hasBasic(plan)
+    fun canOpenInteractiveHtml(plan: SubscriptionPlanTier): Boolean = hasAdvance(plan)
+    fun canAccessFullCourses(plan: SubscriptionPlanTier): Boolean = hasAdvance(plan)
+    fun canExportImportBackup(plan: SubscriptionPlanTier): Boolean = hasAdvance(plan)
+    fun canUsePremiumAppearance(plan: SubscriptionPlanTier): Boolean = hasAdvance(plan)
+}
+
+@Keep
+@IgnoreExtraProperties
+data class SubscriptionRequest(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val userName: String = "",
+    val userEmail: String = "",
+    val requestedPlan: String = "basic",
+    val amountPkr: Long = 499L,
+    val paymentMethod: String = MedPrepConstants.PAYMENT_METHOD_NAME,
+    val recipientIban: String = MedPrepConstants.JAZZCASH_IBAN,
+    val transactionRef: String = "",
+    val senderPhone: String? = null,
+    val status: String = "pending",
+    val adminNote: String? = null,
+    val reviewedBy: String? = null,
+    @ServerTimestamp val reviewedAt: Timestamp? = null,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+data class SubscriptionRequestInput(
+    val userName: String,
+    val userEmail: String,
+    val requestedPlan: SubscriptionPlanTier,
+    val transactionRef: String,
+    val senderPhone: String
+)
 
 @Keep
 @IgnoreExtraProperties
@@ -375,6 +434,8 @@ data class SubjectStats(
 
 object MedPrepConstants {
     const val BOOTSTRAP_ADMIN_EMAIL = "irfanalichachar862@gmail.com"
+    const val JAZZCASH_IBAN = "PK16JCMA2801923160395755"
+    const val PAYMENT_METHOD_NAME = "JazzCash"
 
     val EXAM_TRACKS = listOf(
         "MDCAT",

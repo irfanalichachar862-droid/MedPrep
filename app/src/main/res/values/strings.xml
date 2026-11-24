@@ -63,6 +63,7 @@
     <string name="admin_tab_excel">Excel</string>
     <string name="admin_tab_posts">Posts</string>
     <string name="admin_tab_keys">Keys</string>
+    <string name="admin_tab_plans">Plans</string>
     <string name="studio_publish">Publish</string>
     <string name="studio_unpublish">Move to Draft</string>
     <string name="studio_search_hint">Search question, subject, or topic…</string>

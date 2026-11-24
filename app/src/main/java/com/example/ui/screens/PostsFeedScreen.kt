@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Quiz
 import androidx.compose.material3.Button
@@ -56,7 +57,9 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.McqQuestion
 import com.example.data.MedPrepConstants
+import com.example.data.PlanEntitlements
 import com.example.data.StudyPost
+import com.example.data.SubscriptionPlanTier
 import com.example.data.TopicLinkResolver
 import com.example.data.UiState
 import com.example.ui.components.FormulaText
@@ -64,14 +67,17 @@ import com.example.ui.theme.subjectVisualFor
 
 @Composable
 fun PostsFeedScreen(
+    activePlan: SubscriptionPlanTier,
     postsState: UiState<List<StudyPost>>,
     publishedQuestions: List<McqQuestion>,
     isDarkTheme: Boolean,
     onOpenInteractiveLesson: (StudyPost) -> Unit,
     onPracticeLinkedMcqs: (StudyPost) -> Unit,
+    onOpenPlansTab: () -> Unit,
     onPostMessage: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val canOpenInteractiveHtml = PlanEntitlements.canOpenInteractiveHtml(activePlan)
     var selectedSubject by remember { mutableStateOf("All") }
     val posts = (postsState as? UiState.Success)?.data.orEmpty()
 
@@ -205,7 +211,15 @@ fun PostsFeedScreen(
                                 post = post,
                                 linkedMcqCount = linkedCount,
                                 isDarkTheme = isDarkTheme,
-                                onOpenInteractiveHtml = { onOpenInteractiveLesson(post) },
+                                canOpenInteractiveHtml = canOpenInteractiveHtml,
+                                onOpenInteractiveHtml = {
+                                    if (canOpenInteractiveHtml) {
+                                        onOpenInteractiveLesson(post)
+                                    } else {
+                                        onPostMessage("Interactive HTML topic lessons require Advance Plan (PKR 999/mo via JazzCash).")
+                                        onOpenPlansTab()
+                                    }
+                                },
                                 onPracticeLinkedMcqs = { onPracticeLinkedMcqs(post) },
                                 onOpenUrl = { url -> openExternalLink(context, url, onPostMessage) }
                             )
@@ -224,6 +238,7 @@ private fun StudyPostCard(
     post: StudyPost,
     linkedMcqCount: Int,
     isDarkTheme: Boolean,
+    canOpenInteractiveHtml: Boolean,
     onOpenInteractiveHtml: () -> Unit,
     onPracticeLinkedMcqs: () -> Unit,
     onOpenUrl: (String) -> Unit
@@ -306,16 +321,30 @@ private fun StudyPostCard(
             }
 
             if (post.hasInteractiveHtml) {
-                Button(
-                    onClick = onOpenInteractiveHtml,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("post_open_interactive_html_button")
-                ) {
-                    Icon(Icons.Rounded.Code, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Open Interactive Topic Explanation")
+                if (canOpenInteractiveHtml) {
+                    Button(
+                        onClick = onOpenInteractiveHtml,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("post_open_interactive_html_button")
+                    ) {
+                        Icon(Icons.Rounded.Code, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Open Interactive Topic Explanation")
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = onOpenInteractiveHtml,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("post_open_interactive_html_button")
+                    ) {
+                        Icon(Icons.Rounded.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Unlock Interactive HTML Lesson (Advance Plan)")
+                    }
                 }
             }
 

@@ -189,6 +189,33 @@
         "boundDeviceId", "createdBy", "createdAt", "updatedAt"
       ]
     },
+    "SubscriptionRequest": {
+      "title": "SubscriptionRequest",
+      "description": "Student JazzCash payment submission awaiting Admin verification to grant Basic or Advance plan access.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "requestedPlan": { "type": "string", "enum": ["basic", "advance"] },
+        "amountPkr": { "type": "integer", "enum": [499, 999] },
+        "paymentMethod": { "type": "string" },
+        "recipientIban": { "type": "string" },
+        "transactionRef": { "type": "string" },
+        "senderPhone": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "revoked"] },
+        "adminNote": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId", "userName", "userEmail", "requestedPlan", "amountPkr",
+        "paymentMethod", "recipientIban", "transactionRef", "senderPhone",
+        "status", "createdAt", "updatedAt"
+      ]
+    },
     "QuestionAttempt": {
       "title": "QuestionAttempt",
       "description": "Per-user state for a specific MCQ including latest selected option, correctness, bookmark status, and attempt count.",
@@ -288,6 +315,10 @@
     "/access_keys/{keyCode}": {
       "schema": { "$ref": "#/entities/AccessKey" },
       "description": "Admin-issued student access keys locked to 1 user and 1 device."
+    },
+    "/subscription_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/SubscriptionRequest" },
+      "description": "Student JazzCash plan payment verification requests managed by Admin."
     },
     "/users/{userId}/attempts/{attemptId}": {
       "schema": { "$ref": "#/entities/QuestionAttempt" },

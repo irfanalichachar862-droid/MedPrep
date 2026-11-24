@@ -26,6 +26,9 @@ import com.example.data.StudyNote
 import com.example.data.StudyNoteDraft
 import com.example.data.StudyPost
 import com.example.data.StudyPostDraftInput
+import com.example.data.SubscriptionPlanTier
+import com.example.data.SubscriptionRequest
+import com.example.data.SubscriptionRequestInput
 import com.example.data.SyncReport
 import com.example.data.UiState
 import com.example.data.UserProfile
@@ -122,6 +125,28 @@ class MedPrepViewModel(
     val allAccessKeysState: StateFlow<UiState<List<AccessKey>>> =
         (if (bootstrapAdmin) repository.observeAllAccessKeys(currentUserId) else flowOf(emptyList()))
             .toUiStateFlow("observeAllAccessKeys", "Failed to load Access Keys")
+
+    val userSubscriptionRequestsState: StateFlow<List<SubscriptionRequest>> =
+        repository.observeUserSubscriptionRequests(currentUserId)
+            .catch { error ->
+                val firestoreError = unwrapFirestoreError(error)
+                if (firestoreError == null && error is CancellationException) throw error
+                Log.w(TAG, "Error observing user subscription requests", firestoreError ?: error)
+                emit(emptyList())
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                initialValue = emptyList()
+            )
+
+    val allSubscriptionRequestsState: StateFlow<UiState<List<SubscriptionRequest>>> =
+        (if (bootstrapAdmin) repository.observeAllSubscriptionRequests(currentUserId) else flowOf(emptyList()))
+            .toUiStateFlow("observeAllSubscriptionRequests", "Failed to load payment requests")
+
+    val allUsersState: StateFlow<UiState<List<UserProfile>>> =
+        (if (bootstrapAdmin) repository.observeAllUserProfiles(currentUserId) else flowOf(emptyList()))
+            .toUiStateFlow("observeAllUserProfiles", "Failed to load student accounts")
 
     val strictKeyAccessStatus: StateFlow<StudentAccessStatus> = userAccessKeysState
         .map { keysState ->
@@ -406,7 +431,6 @@ class MedPrepViewModel(
         dailyGoal: Long,
         contactEmail: String? = null,
         phoneNumber: String? = null,
-        subscriptionPlan: String? = null,
         scheduleDays: Long? = null
     ) {
         viewModelScope.launch {
@@ -417,7 +441,6 @@ class MedPrepViewModel(
                 dailyGoal = dailyGoal,
                 contactEmail = contactEmail,
                 phoneNumber = phoneNumber,
-                subscriptionPlan = subscriptionPlan,
                 scheduleDays = scheduleDays
             )
                 .onSuccess { _snackbarMessage.value = "Profile & study preferences saved." }
@@ -426,13 +449,94 @@ class MedPrepViewModel(
         }
     }
 
-    fun selectSubscriptionPlan(planKey: String, planLabel: String) {
+    fun submitSubscriptionPaymentRequest(
+        requestedPlan: SubscriptionPlanTier,
+        transactionRef: String,
+        senderPhone: String,
+        userName: String,
+        userEmail: String,
+        onSuccess: () -> Unit = {}
+    ) {
+        if (_isMutating.value) return
         viewModelScope.launch {
             _isMutating.value = true
-            repository.updateSubscriptionPlan(planKey)
-                .onSuccess { _snackbarMessage.value = "Active plan updated to $planLabel." }
-                .onFailure { e -> _snackbarMessage.value = e.localizedMessage ?: "Could not update plan." }
+            repository.submitSubscriptionRequest(
+                SubscriptionRequestInput(
+                    userName = userName,
+                    userEmail = userEmail,
+                    requestedPlan = requestedPlan,
+                    transactionRef = transactionRef,
+                    senderPhone = senderPhone
+                )
+            )
+                .onSuccess {
+                    _snackbarMessage.value = "JazzCash payment submitted for ${requestedPlan.title} (PKR ${requestedPlan.amountPkr}). Admin will verify & activate your plan."
+                    onSuccess()
+                }
+                .onFailure { e ->
+                    _snackbarMessage.value = e.localizedMessage ?: "Could not submit payment request."
+                }
             _isMutating.value = false
+        }
+    }
+
+    fun cancelSubscriptionRequest(requestId: String) {
+        viewModelScope.launch {
+            repository.deleteSubscriptionRequest(requestId)
+                .onSuccess { _snackbarMessage.value = "Payment request cancelled." }
+                .onFailure { e -> _snackbarMessage.value = e.localizedMessage ?: "Could not cancel request." }
+        }
+    }
+
+    fun adminReviewSubscriptionRequest(
+        request: SubscriptionRequest,
+        approve: Boolean,
+        adminNote: String = ""
+    ) {
+        if (_isMutating.value) return
+        viewModelScope.launch {
+            _isMutating.value = true
+            repository.adminReviewSubscriptionRequest(request, approve, adminNote)
+                .onSuccess {
+                    val planLabel = SubscriptionPlanTier.fromKey(request.requestedPlan).title
+                    _snackbarMessage.value = if (approve) {
+                        "Approved! Granted $planLabel plan to ${request.userName.ifBlank { request.userEmail }}."
+                    } else {
+                        "Rejected payment request from ${request.userName.ifBlank { request.userEmail }}."
+                    }
+                }
+                .onFailure { e ->
+                    _snackbarMessage.value = e.localizedMessage ?: "Could not process request."
+                }
+            _isMutating.value = false
+        }
+    }
+
+    fun adminSetUserPlan(userId: String, userName: String, planKey: String) {
+        if (_isMutating.value) return
+        viewModelScope.launch {
+            _isMutating.value = true
+            repository.adminSetUserSubscriptionPlan(userId, planKey)
+                .onSuccess {
+                    val tier = SubscriptionPlanTier.fromKey(planKey)
+                    _snackbarMessage.value = if (tier == SubscriptionPlanTier.FREE) {
+                        "Removed paid plan from $userName (set to Free)."
+                    } else {
+                        "Granted ${tier.title} plan to $userName!"
+                    }
+                }
+                .onFailure { e ->
+                    _snackbarMessage.value = e.localizedMessage ?: "Could not update user plan."
+                }
+            _isMutating.value = false
+        }
+    }
+
+    fun adminDeleteSubscriptionRequest(requestId: String) {
+        viewModelScope.launch {
+            repository.deleteSubscriptionRequest(requestId)
+                .onSuccess { _snackbarMessage.value = "Payment request record removed." }
+                .onFailure { e -> _snackbarMessage.value = e.localizedMessage ?: "Could not delete record." }
         }
     }
 
@@ -527,7 +631,6 @@ class MedPrepViewModel(
                     dailyGoal = payload.dailyGoal ?: currentProfile?.dailyGoal ?: 25L,
                     contactEmail = payload.contactEmail,
                     phoneNumber = payload.phoneNumber,
-                    subscriptionPlan = payload.subscriptionPlan,
                     scheduleDays = payload.scheduleDays
                 )
 
@@ -869,7 +972,7 @@ class MedPrepViewModel(
         startTimer()
     }
 
-    fun startLinkedMcqsForPost(post: StudyPost) {
+    fun startLinkedMcqsForPost(post: StudyPost, maxQuestions: Int = 50) {
         val allPublished = (publishedQuestionsState.value as? UiState.Success)?.data
             ?.filter { MedPrepConstants.isCoreSubject(it.subject) }.orEmpty()
         val linked = com.example.data.TopicLinkResolver.findLinkedQuestions(post, allPublished)
@@ -880,6 +983,7 @@ class MedPrepViewModel(
 
         val shuffledQuestions = linked
             .shuffled()
+            .take(maxQuestions.coerceAtLeast(1))
             .map { ShuffledQuestion.from(it, shuffleOptions = activeShuffleEnabled) }
 
         val label = if (post.topic.isNotBlank()) "${post.subject} • ${post.topic}" else post.title

@@ -57,6 +57,8 @@ import com.example.data.QuestionAttempt
 import com.example.data.StudyMode
 import com.example.data.StudyNote
 import com.example.data.StudyNoteDraft
+import com.example.data.SubscriptionPlanTier
+import com.example.data.SubscriptionRequest
 import com.example.data.UiState
 import com.example.data.UserProfile
 import com.example.ui.components.LiquidGlassScrollableTabBar
@@ -92,6 +94,7 @@ fun MoreMenuHubScreen(
     studyNotes: List<StudyNote>,
     difficultQuestions: List<DifficultQuestionItem>,
     downloadedPacks: List<DownloadedMcqPack>,
+    userSubscriptionRequests: List<SubscriptionRequest>,
     activeAccessKey: AccessKey?,
     deviceId: String,
     appearanceConfig: AppAppearanceConfig,
@@ -103,8 +106,9 @@ fun MoreMenuHubScreen(
     snackbarHostState: SnackbarHostState,
     onUpdateAppearance: (AppAppearanceConfig) -> Unit,
     onUpdateFunctionalSettings: (AppFunctionalSettings) -> Unit,
-    onSaveFullProfile: (String, String, Long, String?, String?, String?, Long?) -> Unit,
-    onSelectPlan: (String, String) -> Unit,
+    onSaveFullProfile: (String, String, Long, String?, String?, Long?) -> Unit,
+    onSubmitPaymentRequest: (SubscriptionPlanTier, String, String, String, String, () -> Unit) -> Unit,
+    onCancelPendingRequest: (String) -> Unit,
     onSaveScheduleDays: (Long) -> Unit,
     onStartStudy: (StudyMode, String?, Int) -> Unit,
     onStartCustomQuiz: (String, List<McqQuestion>) -> Unit,
@@ -125,6 +129,7 @@ fun MoreMenuHubScreen(
 
     var selectedTab by rememberSaveable(initialTab) { mutableStateOf(initialTab) }
     val profile = (profileState as? UiState.Success)?.data
+    val activePlan = SubscriptionPlanTier.fromKey(profile?.subscriptionPlan)
 
     val tabItems = remember {
         MoreMenuTab.entries.map { tab ->
@@ -209,18 +214,25 @@ fun MoreMenuHubScreen(
                         )
 
                         MoreMenuTab.PLANS -> PlansTabContent(
-                            currentPlanKey = profile?.subscriptionPlan ?: "free",
+                            profile = profile,
+                            currentPlanKey = activePlan.key,
+                            userRequests = userSubscriptionRequests,
                             isMutating = isMutating,
-                            onSelectPlan = onSelectPlan,
+                            onSubmitPaymentRequest = onSubmitPaymentRequest,
+                            onCancelPendingRequest = onCancelPendingRequest,
                             onPostMessage = onPostMessage
                         )
 
                         MoreMenuTab.APPEARANCE -> AppearanceTabContent(
+                            activePlan = activePlan,
                             appearance = appearanceConfig,
-                            onUpdateAppearance = onUpdateAppearance
+                            onUpdateAppearance = onUpdateAppearance,
+                            onUpgradeToAdvance = { selectedTab = MoreMenuTab.PLANS },
+                            onPostMessage = onPostMessage
                         )
 
                         MoreMenuTab.PROGRESS -> ProgressScheduleTabContent(
+                            activePlan = activePlan,
                             profile = profile,
                             publishedQuestions = publishedQuestions,
                             attemptsMap = attemptsMap,
@@ -229,10 +241,12 @@ fun MoreMenuHubScreen(
                             onStartStudy = { mode, subject, count ->
                                 onClose()
                                 onStartStudy(mode, subject, count)
-                            }
+                            },
+                            onUpgradeToBasic = { selectedTab = MoreMenuTab.PLANS }
                         )
 
                         MoreMenuTab.HIGHLIGHTS_NOTES -> HighlightsNotesTabContent(
+                            activePlan = activePlan,
                             publishedQuestions = publishedQuestions,
                             studyNotes = studyNotes,
                             downloadedPacks = downloadedPacks,
@@ -245,10 +259,12 @@ fun MoreMenuHubScreen(
                             onDeleteOfflinePack = onDeleteOfflinePack,
                             onSaveNote = onSaveNote,
                             onDeleteNote = onDeleteNote,
+                            onUpgradePlan = { selectedTab = MoreMenuTab.PLANS },
                             onPostMessage = onPostMessage
                         )
 
                         MoreMenuTab.DIFFICULT -> DifficultQuestionsTabContent(
+                            activePlan = activePlan,
                             publishedQuestions = publishedQuestions,
                             personalDifficult = difficultQuestions,
                             isMutating = isMutating,
@@ -258,10 +274,12 @@ fun MoreMenuHubScreen(
                             },
                             onSaveDifficultQuestion = onSaveDifficultQuestion,
                             onDeleteDifficultQuestion = onDeleteDifficultQuestion,
+                            onUpgradePlan = { selectedTab = MoreMenuTab.PLANS },
                             onPostMessage = onPostMessage
                         )
 
                         MoreMenuTab.SETTINGS_BACKUP -> SettingsBackupTabContent(
+                            activePlan = activePlan,
                             profile = profile,
                             appearance = appearanceConfig,
                             settings = functionalSettings,
@@ -274,6 +292,7 @@ fun MoreMenuHubScreen(
                             onUpdateSettings = onUpdateFunctionalSettings,
                             onSyncNow = onSyncNow,
                             onImportBackup = onImportBackup,
+                            onUpgradeToAdvance = { selectedTab = MoreMenuTab.PLANS },
                             onOpenAdminPanel = onOpenAdminPanel,
                             onSignOut = onSignOut,
                             onPostMessage = onPostMessage

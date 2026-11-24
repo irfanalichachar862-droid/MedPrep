@@ -55,8 +55,8 @@ service cloud.firestore {
     }
 
     // --- VALIDATION BLUEPRINTS ---
-    function isValidUserProfile(data) {
-      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+    function isValidUserProfile(data, targetUserId) {
+      return data.userId is string && data.userId == targetUserId && data.userId.size() <= 128 &&
              data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
              (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 160)) &&
              (!('contactEmail' in data) || data.contactEmail == null || (data.contactEmail is string && data.contactEmail.size() <= 160)) &&
@@ -68,6 +68,27 @@ service cloud.firestore {
              data.totalAnswered is int && data.totalAnswered >= 0 && data.totalAnswered <= 1000000 &&
              data.totalCorrect is int && data.totalCorrect >= 0 && data.totalCorrect <= data.totalAnswered &&
              (!('lastSyncedAt' in data) || data.lastSyncedAt == null || isValidTimestamp(data.lastSyncedAt)) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidSubscriptionRequest(data) {
+      return data.userId is string && isValidId(data.userId) &&
+             data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 80 &&
+             data.userEmail is string && data.userEmail.size() <= 160 &&
+             data.requestedPlan is string && data.requestedPlan in ['basic', 'advance'] &&
+             data.amountPkr is int && (
+               (data.requestedPlan == 'basic' && data.amountPkr == 499) ||
+               (data.requestedPlan == 'advance' && data.amountPkr == 999)
+             ) &&
+             data.paymentMethod is string && data.paymentMethod == 'JazzCash' &&
+             data.recipientIban is string && data.recipientIban == 'PK16JCMA2801923160395755' &&
+             data.transactionRef is string && data.transactionRef.size() >= 4 && data.transactionRef.size() <= 60 &&
+             data.senderPhone is string && data.senderPhone.size() <= 30 &&
+             data.status is string && data.status in ['pending', 'approved', 'rejected', 'revoked'] &&
+             (!('adminNote' in data) || data.adminNote == null || (data.adminNote is string && data.adminNote.size() <= 300)) &&
+             (!('reviewedBy' in data) || data.reviewedBy == null || (data.reviewedBy is string && data.reviewedBy.size() <= 128)) &&
+             (!('reviewedAt' in data) || data.reviewedAt == null || isValidTimestamp(data.reviewedAt)) &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
     }
@@ -190,10 +211,11 @@ service cloud.firestore {
              isValidTimestamp(data.createdAt);
     }
 
-    // --- USER PROFILES (Strict Owner-Only PII Isolation) ---
+    // --- USER PROFILES (Owner Isolation + Admin-Only Subscription Plan Control) ---
     match /users/{userId} {
-      allow get: if isOwner(userId) && isValidId(userId);
-      allow list: if false;
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      // Bootstrap Admin can list users to grant/revoke subscription plans (zero get()/exists() in allow list)
+      allow list: if isBootstrapAdmin();
 
       allow create: if isOwner(userId) &&
                        isValidId(userId) &&
@@ -206,23 +228,32 @@ service cloud.firestore {
                          'subscriptionPlan', 'scheduleDays', 'targetExam', 'dailyGoal',
                          'totalAnswered', 'totalCorrect', 'lastSyncedAt', 'createdAt', 'updatedAt'
                        ]) &&
-                       isValidUserProfile(incoming());
+                       // New student accounts always start on 'free' unless created by Admin
+                       (!('subscriptionPlan' in incoming()) || incoming().subscriptionPlan == null ||
+                        incoming().subscriptionPlan == 'free' || isAdmin()) &&
+                       isValidUserProfile(incoming(), userId);
 
-      allow update: if isOwner(userId) &&
-                       isValidId(userId) &&
-                       isValidUserProfile(incoming()) &&
+      allow update: if isValidId(userId) &&
+                       isValidUserProfile(incoming(), userId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt && (
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'displayName', 'email', 'contactEmail', 'phoneNumber',
-                           'subscriptionPlan', 'scheduleDays', 'targetExam', 'dailyGoal', 'updatedAt'
-                         ]) ||
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'totalAnswered', 'totalCorrect', 'lastSyncedAt', 'updatedAt'
-                         ]) ||
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'lastSyncedAt', 'updatedAt'
-                         ])
+                         // Tier 1: Owner updates own profile/study metrics (CANNOT change subscriptionPlan!)
+                         (isOwner(userId) && (
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'displayName', 'email', 'contactEmail', 'phoneNumber',
+                             'scheduleDays', 'targetExam', 'dailyGoal', 'updatedAt'
+                           ]) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'totalAnswered', 'totalCorrect', 'lastSyncedAt', 'updatedAt'
+                           ]) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'lastSyncedAt', 'updatedAt'
+                           ])
+                         )) ||
+                         // Tier 2: Admin grants or removes any user's subscriptionPlan
+                         (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+                           'subscriptionPlan', 'updatedAt'
+                         ]))
                        );
 
       allow delete: if isOwner(userId) && isValidId(userId);
@@ -534,6 +565,48 @@ service cloud.firestore {
                        );
 
       allow delete: if isSignedIn() && isValidId(keyCode) && isAdmin();
+    }
+
+    // --- JAZZCASH SUBSCRIPTION PAYMENT REQUESTS (Student Submit, Admin Approve/Reject/Revoke) ---
+    match /subscription_requests/{requestId} {
+      allow get: if isSignedIn() && isValidId(requestId) &&
+                    (existing().userId == request.auth.uid || isAdmin());
+
+      // Zero get()/exists() in allow list: students see only their own requests; bootstrap admin sees all
+      allow list: if isSignedIn() &&
+                     (resource.data.userId == request.auth.uid || isBootstrapAdmin());
+
+      allow create: if isSignedIn() &&
+                       isValidId(requestId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'userName', 'userEmail', 'requestedPlan', 'amountPkr',
+                         'paymentMethod', 'recipientIban', 'transactionRef', 'senderPhone',
+                         'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'userName', 'userEmail', 'requestedPlan', 'amountPkr',
+                         'paymentMethod', 'recipientIban', 'transactionRef', 'senderPhone',
+                         'status', 'adminNote', 'reviewedBy', 'reviewedAt', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().status == 'pending' &&
+                       isValidSubscriptionRequest(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(requestId) &&
+                       isAdmin() &&
+                       isValidSubscriptionRequest(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().requestedPlan == existing().requestedPlan &&
+                       incoming().amountPkr == existing().amountPkr &&
+                       incoming().transactionRef == existing().transactionRef &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'status', 'adminNote', 'reviewedBy', 'reviewedAt', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(requestId) &&
+                       (isAdmin() || (existing().userId == request.auth.uid && existing().status == 'pending'));
     }
   }
 }

@@ -286,7 +286,7 @@ test("User Profile Extensions, Highlights/Notes & Difficult Questions: Strictly 
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   const ts = pastDate(8000);
 
-  // Alice creates her profile with contactEmail, phoneNumber, subscriptionPlan, and scheduleDays
+  // Alice creates her profile starting on 'free' plan (students cannot self-assign paid plans)
   await assertSucceeds(
     aliceDb.collection("users").doc(ALICE_UID).set({
       userId: ALICE_UID,
@@ -294,7 +294,7 @@ test("User Profile Extensions, Highlights/Notes & Difficult Questions: Strictly 
       email: "alice@student.edu",
       contactEmail: "alice.alt@example.com",
       phoneNumber: "+923001234567",
-      subscriptionPlan: "advance",
+      subscriptionPlan: "free",
       scheduleDays: 30,
       targetExam: "MDCAT",
       dailyGoal: 30,
@@ -305,7 +305,13 @@ test("User Profile Extensions, Highlights/Notes & Difficult Questions: Strictly 
     })
   );
 
-  // Invalid subscription plan is rejected
+  // Student CANNOT self-upgrade to paid plan or invalid plan
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).update({
+      subscriptionPlan: "advance",
+      updatedAt: pastDate(1000),
+    })
+  );
   await assertFails(
     aliceDb.collection("users").doc(ALICE_UID).update({
       subscriptionPlan: "vip_hacked",
@@ -432,6 +438,117 @@ test("Courses: Admin-only create/edit/delete, Student read published only, linke
   // Admin can delete draft course
   await assertSucceeds(adminDb.collection("courses").doc("c_draft").delete());
 });
+
+test("JazzCash Subscriptions: Student submits pending request, cannot self-approve; Admin grants & revokes user plans", async () => {
+  const adminDb = adminContext();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const ts = pastDate(8000);
+
+  // Alice creates her free profile
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      displayName: "Alice Khan",
+      email: "alice@student.edu",
+      subscriptionPlan: "free",
+      targetExam: "MDCAT",
+      dailyGoal: 25,
+      totalAnswered: 0,
+      totalCorrect: 0,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  // Alice cannot self-create a profile with 'basic' or 'advance'
+  await assertFails(
+    bobDb.collection("users").doc(BOB_UID).set({
+      userId: BOB_UID,
+      displayName: "Bob",
+      subscriptionPlan: "basic",
+      targetExam: "MDCAT",
+      dailyGoal: 25,
+      totalAnswered: 0,
+      totalCorrect: 0,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  const validRequest = {
+    userId: ALICE_UID,
+    userName: "Alice Khan",
+    userEmail: "alice@student.edu",
+    requestedPlan: "basic",
+    amountPkr: 499,
+    paymentMethod: "JazzCash",
+    recipientIban: "PK16JCMA2801923160395755",
+    transactionRef: "JC987654321",
+    senderPhone: "03001234567",
+    status: "pending",
+    createdAt: ts,
+    updatedAt: ts,
+  };
+
+  // Alice submits JazzCash payment request for Basic (499 PKR)
+  await assertSucceeds(aliceDb.collection("subscription_requests").doc("req_1").set(validRequest));
+
+  // Wrong amount for plan or self-approved status rejected
+  await assertFails(
+    aliceDb.collection("subscription_requests").doc("req_bad_price").set({
+      ...validRequest,
+      requestedPlan: "advance",
+      amountPkr: 499,
+    })
+  );
+  await assertFails(
+    aliceDb.collection("subscription_requests").doc("req_self_ok").set({
+      ...validRequest,
+      status: "approved",
+    })
+  );
+
+  // Alice can list her own requests; Bob cannot read or list Alice's requests
+  await assertSucceeds(aliceDb.collection("subscription_requests").where("userId", "==", ALICE_UID).get());
+  await assertFails(bobDb.collection("subscription_requests").doc("req_1").get());
+  await assertFails(bobDb.collection("subscription_requests").get());
+
+  // Alice CANNOT approve her own request
+  await assertFails(
+    aliceDb.collection("subscription_requests").doc("req_1").update({
+      status: "approved",
+      updatedAt: pastDate(1000),
+    })
+  );
+
+  // Admin CAN list all users & all requests, approve request, and grant/remove plan on user profile
+  await assertSucceeds(adminDb.collection("users").get());
+  await assertSucceeds(adminDb.collection("subscription_requests").get());
+  await assertSucceeds(
+    adminDb.collection("subscription_requests").doc("req_1").update({
+      status: "approved",
+      adminNote: "Verified JazzCash TID",
+      reviewedBy: ADMIN_UID,
+      reviewedAt: pastDate(1000),
+      updatedAt: pastDate(1000),
+    })
+  );
+  await assertSucceeds(
+    adminDb.collection("users").doc(ALICE_UID).update({
+      subscriptionPlan: "basic",
+      updatedAt: pastDate(900),
+    })
+  );
+  // Admin can also remove plan (downgrade back to free)
+  await assertSucceeds(
+    adminDb.collection("users").doc(ALICE_UID).update({
+      subscriptionPlan: "free",
+      updatedAt: pastDate(500),
+    })
+  );
+});
+
 
 
 
