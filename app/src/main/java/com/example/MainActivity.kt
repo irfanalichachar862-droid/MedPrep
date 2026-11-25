@@ -8,7 +8,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -39,9 +38,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -88,6 +90,7 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -113,16 +116,10 @@ class MainActivity : ComponentActivity() {
             var shellState by remember { mutableStateOf<AppShellState?>(null) }
 
             LaunchedEffect(Unit) {
-                // Commit initial opaque frame cleanly so SurfaceSyncGroup finishes well under 1000ms
-                withFrameNanos { }
+                // Commit Frame-0 immediately so initial SurfaceSyncGroup completes in <30ms
                 withFrameNanos { }
                 val appContext = context.applicationContext
                 val loaded = withContext(Dispatchers.IO) {
-                    // Pre-warm bundled TTF fonts into Android's Typeface cache off the Main thread
-                    runCatching { ResourcesCompat.getFont(appContext, R.font.plus_jakarta_sans) }
-                    runCatching { ResourcesCompat.getFont(appContext, R.font.inter) }
-                    runCatching { ResourcesCompat.getFont(appContext, R.font.jetbrains_mono) }
-
                     val appearance = ThemePreferences.loadAppearanceConfig(appContext)
                     val settings = ThemePreferences.loadFunctionalSettings(appContext)
                     val savedEntryMode = ThemePreferences.loadEntryMode(appContext)
@@ -131,9 +128,6 @@ class MainActivity : ComponentActivity() {
                     val deviceId = DeviceIdProvider.getDeviceId(appContext)
                     val auth = Firebase.auth
                     val repo = MedPrepRepository(appContext)
-                    if (settings.notificationsEnabled) {
-                        MedPrepNotificationHelper.syncSchedule(appContext, settings)
-                    }
                     AppShellState(
                         auth = auth,
                         deviceId = deviceId,
@@ -148,6 +142,16 @@ class MainActivity : ComponentActivity() {
                 shellState = loaded
                 withFrameNanos { }
                 runCatching { reportFullyDrawn() }
+                // Defer non-critical font pre-warming & AlarmManager IPC until after startup animations
+                withContext(Dispatchers.IO) {
+                    delay(400)
+                    runCatching { ResourcesCompat.getFont(appContext, R.font.plus_jakarta_sans) }
+                    runCatching { ResourcesCompat.getFont(appContext, R.font.inter) }
+                    runCatching { ResourcesCompat.getFont(appContext, R.font.jetbrains_mono) }
+                    if (loaded.functionalSettings.notificationsEnabled) {
+                        MedPrepNotificationHelper.syncSchedule(appContext, loaded.functionalSettings)
+                    }
+                }
             }
 
             val currentShell = shellState
@@ -623,11 +627,13 @@ private fun AdminPortalHost(
     var streamsReady by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         withFrameNanos { }
-        withFrameNanos { }
+        delay(150)
         streamsReady = true
     }
 
-    val studioState by viewModel.studioQuestionsState.collectAsStateWithLifecycle()
+    val studioState = if (streamsReady) {
+        viewModel.studioQuestionsState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
     val adminCoursesState = if (streamsReady) {
         viewModel.adminCoursesState.collectAsStateWithLifecycle().value
     } else UiState.Loading
@@ -708,17 +714,30 @@ private fun StudentUnlockedHost(
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
+    var streamsReady by remember { mutableStateOf(false) }
 
     LaunchedEffect(currentUserId) {
         withFrameNanos { }
+        delay(150)
+        streamsReady = true
         viewModel.loadOfflinePacks(context)
     }
 
-    val profileState by viewModel.userProfileState.collectAsStateWithLifecycle()
-    val publishedState by viewModel.publishedQuestionsState.collectAsStateWithLifecycle()
-    val publishedCoursesState by viewModel.publishedCoursesState.collectAsStateWithLifecycle()
-    val publishedPostsState by viewModel.publishedPostsState.collectAsStateWithLifecycle()
-    val attemptsMap by viewModel.attemptsMapState.collectAsStateWithLifecycle()
+    val profileState = if (streamsReady) {
+        viewModel.userProfileState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
+    val publishedState = if (streamsReady) {
+        viewModel.publishedQuestionsState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
+    val publishedCoursesState = if (streamsReady) {
+        viewModel.publishedCoursesState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
+    val publishedPostsState = if (streamsReady) {
+        viewModel.publishedPostsState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
+    val attemptsMap = if (streamsReady) {
+        viewModel.attemptsMapState.collectAsStateWithLifecycle().value
+    } else emptyMap()
     val downloadedPacks by viewModel.downloadedPacks.collectAsStateWithLifecycle()
     val offlineStudyCache by viewModel.offlineStudyCache.collectAsStateWithLifecycle()
     val localStorageKb by viewModel.localStorageKb.collectAsStateWithLifecycle()
@@ -739,9 +758,10 @@ private fun StudentUnlockedHost(
         (publishedPostsState as? UiState.Success)?.data.orEmpty()
     }
 
-    // Automatically save core MCQs, Courses & Study Posts into private mobile storage for offline study
+    // Debounced auto-save into private mobile storage so startup frames never stall on disk IO
     LaunchedEffect(onlineCoreQuestions, onlineCourses, onlinePosts) {
         if (onlineCoreQuestions.isNotEmpty() || onlineCourses.isNotEmpty() || onlinePosts.isNotEmpty()) {
+            delay(800)
             viewModel.autoCacheStudyData(
                 context = context,
                 questions = onlineCoreQuestions,
@@ -937,9 +957,19 @@ private fun StudentUnlockedHost(
         )
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val useNavRail = maxWidth >= 600.dp
+    val density = LocalDensity.current
+    var containerWidthPx by remember { mutableIntStateOf(0) }
+    val useNavRail = with(density) { containerWidthPx.toDp() >= 600.dp }
 
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onSizeChanged { size ->
+                if (containerWidthPx != size.width) {
+                    containerWidthPx = size.width
+                }
+            }
+    ) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },

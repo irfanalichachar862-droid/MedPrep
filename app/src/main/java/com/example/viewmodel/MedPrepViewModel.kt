@@ -91,43 +91,52 @@ class MedPrepViewModel(
 
     private val _adminCheckDone = MutableStateFlow(bootstrapAdmin)
 
-    val userProfileState: StateFlow<UiState<UserProfile?>> =
+    val userProfileState: StateFlow<UiState<UserProfile?>> by lazy {
         repository.observeUserProfile(currentUserId)
             .toUiStateFlow("observeUserProfile", "Failed to load profile")
+    }
 
-    val publishedQuestionsState: StateFlow<UiState<List<McqQuestion>>> =
+    val publishedQuestionsState: StateFlow<UiState<List<McqQuestion>>> by lazy {
         repository.observePublishedQuestions(currentUserId)
             .toUiStateFlow("observePublishedQuestions", "Failed to load question bank")
+    }
 
-    val studioQuestionsState: StateFlow<UiState<List<McqQuestion>>> =
+    val studioQuestionsState: StateFlow<UiState<List<McqQuestion>>> by lazy {
         (if (bootstrapAdmin) repository.observeStudioQuestions(currentUserId, true) else flowOf(emptyList()))
             .toUiStateFlow("observeStudioQuestions", "Failed to load Admin questions")
+    }
 
-    val publishedPostsState: StateFlow<UiState<List<StudyPost>>> =
+    val publishedPostsState: StateFlow<UiState<List<StudyPost>>> by lazy {
         repository.observePublishedPosts(currentUserId)
             .toUiStateFlow("observePublishedPosts", "Failed to load study posts")
+    }
 
-    val adminPostsState: StateFlow<UiState<List<StudyPost>>> =
+    val adminPostsState: StateFlow<UiState<List<StudyPost>>> by lazy {
         (if (bootstrapAdmin) repository.observeAdminPosts(currentUserId, true) else flowOf(emptyList()))
             .toUiStateFlow("observeAdminPosts", "Failed to load Admin posts")
+    }
 
-    val publishedCoursesState: StateFlow<UiState<List<CourseItem>>> =
+    val publishedCoursesState: StateFlow<UiState<List<CourseItem>>> by lazy {
         repository.observePublishedCourses(currentUserId)
             .toUiStateFlow("observePublishedCourses", "Failed to load courses")
+    }
 
-    val adminCoursesState: StateFlow<UiState<List<CourseItem>>> =
+    val adminCoursesState: StateFlow<UiState<List<CourseItem>>> by lazy {
         (if (bootstrapAdmin) repository.observeAdminCourses(currentUserId, true) else flowOf(emptyList()))
             .toUiStateFlow("observeAdminCourses", "Failed to load Admin courses")
+    }
 
-    val userAccessKeysState: StateFlow<UiState<List<AccessKey>>> =
+    val userAccessKeysState: StateFlow<UiState<List<AccessKey>>> by lazy {
         repository.observeUserAccessKeys(currentUserId)
             .toUiStateFlow("observeUserAccessKeys", "Failed to verify Access Key")
+    }
 
-    val allAccessKeysState: StateFlow<UiState<List<AccessKey>>> =
+    val allAccessKeysState: StateFlow<UiState<List<AccessKey>>> by lazy {
         (if (bootstrapAdmin) repository.observeAllAccessKeys(currentUserId) else flowOf(emptyList()))
             .toUiStateFlow("observeAllAccessKeys", "Failed to load Access Keys")
+    }
 
-    val userSubscriptionRequestsState: StateFlow<List<SubscriptionRequest>> =
+    val userSubscriptionRequestsState: StateFlow<List<SubscriptionRequest>> by lazy {
         repository.observeUserSubscriptionRequests(currentUserId)
             .catch { error ->
                 val firestoreError = unwrapFirestoreError(error)
@@ -140,64 +149,71 @@ class MedPrepViewModel(
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                 initialValue = emptyList()
             )
+    }
 
-    val allSubscriptionRequestsState: StateFlow<UiState<List<SubscriptionRequest>>> =
+    val allSubscriptionRequestsState: StateFlow<UiState<List<SubscriptionRequest>>> by lazy {
         (if (bootstrapAdmin) repository.observeAllSubscriptionRequests(currentUserId) else flowOf(emptyList()))
             .toUiStateFlow("observeAllSubscriptionRequests", "Failed to load payment requests")
+    }
 
-    val allUsersState: StateFlow<UiState<List<UserProfile>>> =
+    val allUsersState: StateFlow<UiState<List<UserProfile>>> by lazy {
         (if (bootstrapAdmin) repository.observeAllUserProfiles(currentUserId) else flowOf(emptyList()))
             .toUiStateFlow("observeAllUserProfiles", "Failed to load student accounts")
+    }
 
-    val strictKeyAccessStatus: StateFlow<StudentAccessStatus> = userAccessKeysState
-        .map { keysState ->
-            when (keysState) {
-                is UiState.Loading -> StudentAccessStatus.Checking
-                is UiState.Error -> StudentAccessStatus.NeedsKey
-                is UiState.Success -> {
-                    val keys = keysState.data
-                    val activeMatching = keys.firstOrNull {
-                        it.status == "active" && it.boundDeviceId == deviceId
-                    }
-                    when {
-                        activeMatching != null -> StudentAccessStatus.Unlocked(activeMatching)
-                        keys.any { it.status == "active" && it.boundDeviceId.isNotBlank() && it.boundDeviceId != deviceId } -> {
-                            val mismatched = keys.first { it.status == "active" && it.boundDeviceId != deviceId }
-                            StudentAccessStatus.DeviceMismatch(mismatched)
+    val strictKeyAccessStatus: StateFlow<StudentAccessStatus> by lazy {
+        userAccessKeysState
+            .map { keysState ->
+                when (keysState) {
+                    is UiState.Loading -> StudentAccessStatus.Checking
+                    is UiState.Error -> StudentAccessStatus.NeedsKey
+                    is UiState.Success -> {
+                        val keys = keysState.data
+                        val activeMatching = keys.firstOrNull {
+                            it.status == "active" && it.boundDeviceId == deviceId
                         }
-                        keys.any { it.status == "revoked" } -> {
-                            StudentAccessStatus.Revoked(keys.first { it.status == "revoked" })
+                        when {
+                            activeMatching != null -> StudentAccessStatus.Unlocked(activeMatching)
+                            keys.any { it.status == "active" && it.boundDeviceId.isNotBlank() && it.boundDeviceId != deviceId } -> {
+                                val mismatched = keys.first { it.status == "active" && it.boundDeviceId != deviceId }
+                                StudentAccessStatus.DeviceMismatch(mismatched)
+                            }
+                            keys.any { it.status == "revoked" } -> {
+                                StudentAccessStatus.Revoked(keys.first { it.status == "revoked" })
+                            }
+                            else -> StudentAccessStatus.NeedsKey
                         }
-                        else -> StudentAccessStatus.NeedsKey
                     }
                 }
             }
-        }
-        .stateIn(
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                initialValue = StudentAccessStatus.Checking
+            )
+    }
+
+    val studentAccessStatus: StateFlow<StudentAccessStatus> by lazy {
+        combine(
+            isAdminUser,
+            _adminCheckDone,
+            strictKeyAccessStatus
+        ) { admin, adminChecked, strictStatus ->
+            if (admin) {
+                StudentAccessStatus.Unlocked(null)
+            } else if (!adminChecked) {
+                StudentAccessStatus.Checking
+            } else {
+                strictStatus
+            }
+        }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-            initialValue = StudentAccessStatus.Checking
+            initialValue = if (bootstrapAdmin) StudentAccessStatus.Unlocked(null) else StudentAccessStatus.Checking
         )
+    }
 
-    val studentAccessStatus: StateFlow<StudentAccessStatus> = combine(
-        isAdminUser,
-        _adminCheckDone,
-        strictKeyAccessStatus
-    ) { admin, adminChecked, strictStatus ->
-        if (admin) {
-            StudentAccessStatus.Unlocked(null)
-        } else if (!adminChecked) {
-            StudentAccessStatus.Checking
-        } else {
-            strictStatus
-        }
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-        initialValue = if (bootstrapAdmin) StudentAccessStatus.Unlocked(null) else StudentAccessStatus.Checking
-    )
-
-    val attemptsMapState: StateFlow<Map<String, QuestionAttempt>> =
+    val attemptsMapState: StateFlow<Map<String, QuestionAttempt>> by lazy {
         repository.observeAttempts(currentUserId)
             .map { list -> list.associateBy { it.questionId } }
             .catch { error ->
@@ -211,8 +227,9 @@ class MedPrepViewModel(
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                 initialValue = emptyMap()
             )
+    }
 
-    val examSessionsState: StateFlow<List<ExamSession>> =
+    val examSessionsState: StateFlow<List<ExamSession>> by lazy {
         repository.observeExamSessions(currentUserId)
             .catch { error ->
                 val firestoreError = unwrapFirestoreError(error)
@@ -225,8 +242,9 @@ class MedPrepViewModel(
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                 initialValue = emptyList()
             )
+    }
 
-    val studyNotesState: StateFlow<List<StudyNote>> =
+    val studyNotesState: StateFlow<List<StudyNote>> by lazy {
         repository.observeStudyNotes(currentUserId)
             .catch { error ->
                 val firestoreError = unwrapFirestoreError(error)
@@ -239,8 +257,9 @@ class MedPrepViewModel(
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                 initialValue = emptyList()
             )
+    }
 
-    val difficultQuestionsState: StateFlow<List<DifficultQuestionItem>> =
+    val difficultQuestionsState: StateFlow<List<DifficultQuestionItem>> by lazy {
         repository.observeDifficultQuestions(currentUserId)
             .catch { error ->
                 val firestoreError = unwrapFirestoreError(error)
@@ -253,6 +272,7 @@ class MedPrepViewModel(
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                 initialValue = emptyList()
             )
+    }
 
     private val _downloadedPacks = MutableStateFlow<List<DownloadedMcqPack>>(emptyList())
     val downloadedPacks: StateFlow<List<DownloadedMcqPack>> = _downloadedPacks.asStateFlow()
@@ -287,6 +307,7 @@ class MedPrepViewModel(
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
+            delay(150)
             repository.ensureUserProfile()
             val admin = repository.checkIsAdmin(currentUserId)
             _isAdminUser.value = admin
