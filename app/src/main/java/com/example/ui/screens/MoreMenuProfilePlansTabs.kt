@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -84,6 +85,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.AccountBalanceWallet
@@ -121,6 +123,31 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 
+/**
+ * Allows only digits 0–9 and an optional single leading '+' (capped at 15 digits per E.164).
+ * Rejects all letters (abc...) and invalid symbols on both typing and paste.
+ */
+private fun sanitizeMobileNumberInput(raw: String): String {
+    if (raw.isEmpty()) return ""
+    val hasLeadingPlus = raw.startsWith("+")
+    val digitsOnly = raw.filter { it.isDigit() }.take(15)
+    return if (hasLeadingPlus) "+$digitsOnly" else digitsOnly
+}
+
+/**
+ * Returns null if blank (optional) or a valid 10–15 digit mobile number, otherwise a user-facing error message.
+ */
+private fun mobileNumberValidationError(value: String): String? {
+    if (value.isEmpty()) return null
+    val digitsCount = value.count { it.isDigit() }
+    return when {
+        !value.matches(Regex("^\\+?\\d*$")) -> "Only digits (0–9) and an optional leading + are allowed"
+        digitsCount < 10 -> "Enter at least 10 digits ($digitsCount/10)"
+        digitsCount > 15 -> "Mobile number cannot exceed 15 digits"
+        else -> null
+    }
+}
+
 // --- TAB 1: PROFILE (EDIT NAME, PHOTO PICKER, EMAILS, MOBILE NO, SUBSCRIPTION PLAN) ---
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -143,7 +170,7 @@ fun ProfileTabContent(
 
     var displayName by remember { mutableStateOf(profile?.displayName ?: "Medical Student") }
     var contactEmail by remember { mutableStateOf(profile?.contactEmail ?: "") }
-    var phoneNumber by remember { mutableStateOf(profile?.phoneNumber ?: "") }
+    var phoneNumber by remember { mutableStateOf(sanitizeMobileNumberInput(profile?.phoneNumber.orEmpty())) }
     var targetExam by remember { mutableStateOf(profile?.targetExam ?: MedPrepConstants.EXAM_TRACKS.first()) }
     var dailyGoal by remember { mutableLongStateOf(profile?.dailyGoal ?: 25L) }
     var avatarBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -159,7 +186,7 @@ fun ProfileTabContent(
         if (profile != null) {
             displayName = profile.displayName
             contactEmail = profile.contactEmail.orEmpty()
-            phoneNumber = profile.phoneNumber.orEmpty()
+            phoneNumber = sanitizeMobileNumberInput(profile.phoneNumber.orEmpty())
             targetExam = profile.targetExam
             dailyGoal = profile.dailyGoal
         }
@@ -456,16 +483,33 @@ fun ProfileTabContent(
                         label = { Text("Additional / Contact Email") },
                         placeholder = { Text("e.g. student.backup@gmail.com") },
                         leadingIcon = { Icon(Icons.Rounded.Email, contentDescription = null) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("hub_profile_email_input")
                     )
 
+                    val phoneError = mobileNumberValidationError(phoneNumber)
+                    val phoneDigitCount = phoneNumber.count { it.isDigit() }
                     OutlinedTextField(
                         value = phoneNumber,
-                        onValueChange = { phoneNumber = it.take(30) },
+                        onValueChange = { raw ->
+                            phoneNumber = sanitizeMobileNumberInput(raw)
+                        },
                         label = { Text("Mobile Number") },
-                        placeholder = { Text("e.g. +92 300 1234567") },
+                        placeholder = { Text("e.g. 03001234567 or +923001234567") },
                         leadingIcon = { Icon(Icons.Rounded.Phone, contentDescription = null) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        isError = phoneError != null,
+                        supportingText = {
+                            Text(
+                                text = phoneError
+                                    ?: if (phoneDigitCount == 0) {
+                                        "Numbers only (10–15 digits, optional leading +)"
+                                    } else {
+                                        "Valid mobile number ($phoneDigitCount/15 digits)"
+                                    }
+                            )
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("hub_profile_phone_input")
                     )
@@ -517,7 +561,10 @@ fun ProfileTabContent(
 
                     Button(
                         onClick = {
-                            if (displayName.trim().isNotEmpty()) {
+                            val validationError = mobileNumberValidationError(phoneNumber)
+                            if (validationError != null) {
+                                onPostMessage(validationError)
+                            } else if (displayName.trim().isNotEmpty()) {
                                 onSaveFullProfile(
                                     displayName.trim(),
                                     targetExam,
@@ -528,7 +575,9 @@ fun ProfileTabContent(
                                 )
                             }
                         },
-                        enabled = !isMutating && displayName.trim().isNotEmpty(),
+                        enabled = !isMutating &&
+                            displayName.trim().isNotEmpty() &&
+                            mobileNumberValidationError(phoneNumber) == null,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp)
@@ -902,7 +951,8 @@ private fun JazzCashCheckoutDialog(
     onSubmit: (String, String) -> Unit
 ) {
     var transactionRef by remember { mutableStateOf("") }
-    var senderPhone by remember { mutableStateOf(defaultPhone) }
+    var senderPhone by remember { mutableStateOf(sanitizeMobileNumberInput(defaultPhone)) }
+    val senderPhoneError = mobileNumberValidationError(senderPhone)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -942,9 +992,14 @@ private fun JazzCashCheckoutDialog(
 
                 OutlinedTextField(
                     value = senderPhone,
-                    onValueChange = { senderPhone = it.take(30) },
+                    onValueChange = { raw -> senderPhone = sanitizeMobileNumberInput(raw) },
                     label = { Text("Your JazzCash Mobile No. (Optional)") },
-                    placeholder = { Text("e.g. 0300-1234567") },
+                    placeholder = { Text("e.g. 03001234567") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    isError = senderPhoneError != null,
+                    supportingText = {
+                        Text(senderPhoneError ?: "Numbers only (10–15 digits, optional leading +)")
+                    },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -955,7 +1010,7 @@ private fun JazzCashCheckoutDialog(
         confirmButton = {
             Button(
                 onClick = { onSubmit(transactionRef.trim(), senderPhone.trim()) },
-                enabled = !isSubmitting && transactionRef.trim().length >= 4,
+                enabled = !isSubmitting && transactionRef.trim().length >= 4 && senderPhoneError == null,
                 modifier = Modifier.testTag("jazzcash_submit_payment_button")
             ) {
                 Text(if (isSubmitting) "Submitting…" else "Submit Payment")

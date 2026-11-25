@@ -436,7 +436,13 @@ class MedPrepRepository(
                 payload["contactEmail"] = contactEmail.trim().take(160)
             }
             if (phoneNumber != null) {
-                payload["phoneNumber"] = phoneNumber.trim().take(30)
+                val trimmedPhone = phoneNumber.trim()
+                if (trimmedPhone.isNotEmpty()) {
+                    require(trimmedPhone.matches(Regex("^\\+?\\d{10,15}$"))) {
+                        "Mobile number must contain 10–15 digits only (optional leading +)."
+                    }
+                }
+                payload["phoneNumber"] = trimmedPhone
             }
             if (scheduleDays != null) {
                 payload["scheduleDays"] = scheduleDays.coerceIn(1L, 365L)
@@ -467,7 +473,13 @@ class MedPrepRepository(
             require(cleanRef.length >= 4) {
                 "Enter your JazzCash Transaction ID (at least 4 characters)."
             }
-            val cleanPhone = input.senderPhone.trim().take(30).takeIf { it.isNotEmpty() }
+            val trimmedSenderPhone = input.senderPhone.trim()
+            if (trimmedSenderPhone.isNotEmpty()) {
+                require(trimmedSenderPhone.matches(Regex("^\\+?\\d{10,15}$"))) {
+                    "Mobile number must contain 10–15 digits only (optional leading +)."
+                }
+            }
+            val cleanPhone = trimmedSenderPhone.takeIf { it.isNotEmpty() }
             val cleanName = input.userName.trim().take(100).ifBlank { "Medical Student" }
             val cleanEmail = input.userEmail.trim().take(160)
 
