@@ -792,6 +792,9 @@ private fun StudentUnlockedHost(
             ?.filter { MedPrepConstants.isCoreSubject(it.subject) }
             .orEmpty()
     }
+    val effectiveCoursesList = remember(effectiveCoursesState) {
+        (effectiveCoursesState as? UiState.Success)?.data.orEmpty()
+    }
     val effectivePostsList = remember(effectivePostsState) {
         (effectivePostsState as? UiState.Success)?.data.orEmpty()
     }
@@ -800,14 +803,16 @@ private fun StudentUnlockedHost(
         viewModel.autoCacheStudyData(
             context = context,
             questions = corePublishedQuestions,
-            courses = (effectiveCoursesState as? UiState.Success)?.data.orEmpty(),
+            courses = effectiveCoursesList,
             posts = effectivePostsList,
             force = true,
             showToast = true
         )
     }
 
-    // 4. THREE-DOTS (⋮) LIQUID GLASS 8-TAB MENU HUB
+    var currentTab by rememberSaveable { mutableStateOf(StudentTab.STUDY) }
+
+    // 4. THREE-DOTS (⋮) LIQUID GLASS MENU HUB (includes Search / Find, Profile, Plans, etc.)
     if (activeMoreMenuTab != null) {
         val studyNotes by viewModel.studyNotesState.collectAsStateWithLifecycle()
         val difficultQuestions by viewModel.difficultQuestionsState.collectAsStateWithLifecycle()
@@ -818,6 +823,8 @@ private fun StudentUnlockedHost(
             currentUserId = currentUserId,
             profileState = profileState,
             publishedQuestions = corePublishedQuestions,
+            publishedCourses = effectiveCoursesList,
+            publishedPosts = effectivePostsList,
             attemptsMap = attemptsMap,
             studyNotes = studyNotes,
             difficultQuestions = difficultQuestions,
@@ -835,6 +842,7 @@ private fun StudentUnlockedHost(
             isMutating = isMutating,
             snackbarHostState = snackbarHostState,
             onUpdateAppearance = onUpdateAppearance,
+            onToggleTheme = onToggleTheme,
             onUpdateFunctionalSettings = onUpdateFunctionalSettings,
             onSaveFullProfile = { name, exam, goal, email, phone, days ->
                 viewModel.saveProfilePreferences(name, exam, goal, email, phone, days)
@@ -860,6 +868,10 @@ private fun StudentUnlockedHost(
                     examSecondsPerQuestion = functionalSettings.examSecondsPerQuestion
                 )
             },
+            onOpenInteractiveLesson = onOpenInteractiveLesson,
+            onNavigateMainTab = { tabId ->
+                currentTab = StudentTab.entries.firstOrNull { it.id == tabId } ?: StudentTab.STUDY
+            },
             onSaveOfflinePack = { title, subj, qs ->
                 viewModel.saveOfflineInteractivePack(context, title, subj, qs)
             },
@@ -882,8 +894,6 @@ private fun StudentUnlockedHost(
     }
 
     // 5. PURE STUDENT APP WITH LIQUID GLASS BOTTOM TABS
-    var currentTab by rememberSaveable { mutableStateOf(StudentTab.STUDY) }
-
     if (currentTab != StudentTab.STUDY) {
         BackHandler { currentTab = StudentTab.STUDY }
     } else if (isAdminUser && adminPreviewingStudent) {

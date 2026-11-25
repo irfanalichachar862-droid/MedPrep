@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.BookmarkAdded
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PriorityHigh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Timeline
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Backup
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PriorityHigh
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -49,6 +51,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.data.AccessKey
+import com.example.data.CourseItem
 import com.example.data.DifficultQuestionDraft
 import com.example.data.DifficultQuestionItem
 import com.example.data.DownloadedMcqPack
@@ -58,6 +61,7 @@ import com.example.data.QuestionAttempt
 import com.example.data.StudyMode
 import com.example.data.StudyNote
 import com.example.data.StudyNoteDraft
+import com.example.data.StudyPost
 import com.example.data.SubscriptionPlanTier
 import com.example.data.SubscriptionRequest
 import com.example.data.UiState
@@ -74,6 +78,7 @@ enum class MoreMenuTab(
     val unselectedIcon: ImageVector,
     val testTag: String
 ) {
+    SEARCH("search", "Search / Find", Icons.Rounded.Search, Icons.Outlined.Search, "hub_tab_search"),
     PROFILE("profile", "Profile", Icons.Rounded.Person, Icons.Outlined.Person, "hub_tab_profile"),
     PLANS("plans", "Plans", Icons.Rounded.AutoAwesome, Icons.Outlined.AutoAwesome, "hub_tab_plans"),
     APPEARANCE("appearance", "Appearance", Icons.Rounded.Palette, Icons.Outlined.Palette, "hub_tab_appearance"),
@@ -91,6 +96,8 @@ fun MoreMenuHubScreen(
     currentUserId: String,
     profileState: UiState<UserProfile?>,
     publishedQuestions: List<McqQuestion>,
+    publishedCourses: List<CourseItem>,
+    publishedPosts: List<StudyPost>,
     attemptsMap: Map<String, QuestionAttempt>,
     studyNotes: List<StudyNote>,
     difficultQuestions: List<DifficultQuestionItem>,
@@ -108,6 +115,7 @@ fun MoreMenuHubScreen(
     isMutating: Boolean,
     snackbarHostState: SnackbarHostState,
     onUpdateAppearance: (AppAppearanceConfig) -> Unit,
+    onToggleTheme: () -> Unit,
     onUpdateFunctionalSettings: (AppFunctionalSettings) -> Unit,
     onSaveFullProfile: (String, String, Long, String?, String?, Long?) -> Unit,
     onActivateOptionalKey: (String) -> Unit,
@@ -116,6 +124,8 @@ fun MoreMenuHubScreen(
     onSaveScheduleDays: (Long) -> Unit,
     onStartStudy: (StudyMode, String?, Int) -> Unit,
     onStartCustomQuiz: (String, List<McqQuestion>) -> Unit,
+    onOpenInteractiveLesson: (StudyPost) -> Unit,
+    onNavigateMainTab: (String) -> Unit,
     onSaveOfflinePack: (String, String, List<McqQuestion>) -> Unit,
     onDeleteOfflinePack: (String) -> Unit,
     onSaveOfflineSnapshotNow: () -> Unit,
@@ -228,6 +238,40 @@ fun MoreMenuHubScreen(
 
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     when (selectedTab) {
+                        MoreMenuTab.SEARCH -> SearchFindTabContent(
+                            activePlan = activePlan,
+                            publishedQuestions = publishedQuestions,
+                            publishedCourses = publishedCourses,
+                            publishedPosts = publishedPosts,
+                            studyNotes = studyNotes,
+                            difficultQuestions = difficultQuestions,
+                            isDarkTheme = isDarkTheme,
+                            isAdminUser = isAdminUser,
+                            onJumpToMoreTab = { target -> selectedTab = target },
+                            onNavigateMainTab = { mainTabId ->
+                                onClose()
+                                onNavigateMainTab(mainTabId)
+                            },
+                            onStartStudy = { mode, subject, count ->
+                                onClose()
+                                onStartStudy(mode, subject, count)
+                            },
+                            onStartCustomQuiz = { title, qs ->
+                                onClose()
+                                onStartCustomQuiz(title, qs)
+                            },
+                            onOpenInteractiveLesson = { post ->
+                                onClose()
+                                onOpenInteractiveLesson(post)
+                            },
+                            onToggleTheme = onToggleTheme,
+                            onSyncNow = onSyncNow,
+                            onSaveOfflineSnapshotNow = onSaveOfflineSnapshotNow,
+                            onOpenAdminPanel = onOpenAdminPanel,
+                            onSignOut = onSignOut,
+                            onPostMessage = onPostMessage
+                        )
+
                         MoreMenuTab.PROFILE -> ProfileTabContent(
                             currentUserId = currentUserId,
                             profile = profile,
