@@ -1,8 +1,5 @@
 package com.example.ui.screens
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -35,14 +32,13 @@ import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DarkMode
-import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.LightMode
-import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.OfflinePin
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Remove
-import androidx.compose.material.icons.rounded.TableView
+import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -68,7 +64,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -76,16 +71,13 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.rounded.Apps
-import androidx.compose.material.icons.rounded.PictureAsPdf
-import com.example.data.PdfMcqExporter
-import com.example.data.PlanEntitlements
 import com.example.R
 import com.example.data.AccessKey
 import com.example.data.DeviceIdProvider
 import com.example.data.ExamSession
+import com.example.data.LocalStudyCache
 import com.example.data.McqQuestion
 import com.example.data.MedPrepConstants
-import com.example.data.SpreadsheetMcqReader
 import com.example.data.SubscriptionPlanTier
 import com.example.data.SyncReport
 import com.example.data.UiState
@@ -103,6 +95,8 @@ import java.util.Locale
 fun ProfileScreen(
     profileState: UiState<UserProfile?>,
     publishedQuestions: List<McqQuestion>,
+    offlineStudyCache: LocalStudyCache?,
+    localStorageKb: Long,
     examSessions: List<ExamSession>,
     activeAccessKey: AccessKey?,
     deviceId: String,
@@ -113,60 +107,23 @@ fun ProfileScreen(
     isMutating: Boolean,
     onSelectThemeMode: (AppThemeMode) -> Unit,
     onOpenMoreTab: (MoreMenuTab) -> Unit,
-    onSaveOfflinePack: (String, String, List<McqQuestion>) -> Unit,
+    onSaveOfflineSnapshot: () -> Unit,
+    onActivateOptionalKey: (String) -> Unit,
     onSyncNow: () -> Unit,
     onSavePreferences: (String, String, Long) -> Unit,
     onPostMessage: (String) -> Unit,
     onSignOut: () -> Unit
 ) {
-    val context = LocalContext.current
     val extendedColors = LocalMedPrepColors.current
     val clipboard = LocalClipboardManager.current
     val profile = (profileState as? UiState.Success)?.data
     val activePlan = SubscriptionPlanTier.fromKey(profile?.subscriptionPlan)
-    val canDownloadPdfAndPacks = PlanEntitlements.canDownloadPdfAndOfflinePacks(activePlan)
     val publishedCount = publishedQuestions.size
 
     var displayName by remember { mutableStateOf(profile?.displayName ?: "Medical Student") }
     var targetExam by remember { mutableStateOf(profile?.targetExam ?: MedPrepConstants.EXAM_TRACKS.first()) }
     var dailyGoal by remember { mutableLongStateOf(profile?.dailyGoal ?: 25L) }
-
-    val downloadPdfLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/pdf")
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    PdfMcqExporter.writeMcqsPdf(
-                        outputStream = out,
-                        title = "MedPrep — Complete MCQ Bank",
-                        subtitle = "Offline PDF with Answer Keys & Reasons",
-                        questions = publishedQuestions
-                    )
-                }
-                onSaveOfflinePack("All Subjects Interactive Pack", "All Subjects", publishedQuestions)
-                onPostMessage("Saved $publishedCount MCQs as PDF + Interactive Offline Pack!")
-            } catch (e: Exception) {
-                onPostMessage("PDF download failed: ${e.localizedMessage ?: "Error"}")
-            }
-        }
-    }
-
-    val downloadCsvLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/csv")
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                val csv = SpreadsheetMcqReader.exportQuestionsToCsv(publishedQuestions)
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(csv.toByteArray(Charsets.UTF_8))
-                }
-                onPostMessage("Downloaded $publishedCount MCQs as CSV!")
-            } catch (e: Exception) {
-                onPostMessage("Download failed: ${e.localizedMessage ?: "Error"}")
-            }
-        }
-    }
+    var optionalKeyInput by remember { mutableStateOf("") }
 
     LaunchedEffect(profile?.id, profile?.displayName, profile?.targetExam, profile?.dailyGoal) {
         if (profile != null) {
@@ -283,52 +240,118 @@ fun ProfileScreen(
                 }
             }
 
-            // Student 1-Device Access Key License Card (Shown to students)
-            if (!isAdminUser && activeAccessKey != null) {
+            // Student Optional Access Key Card (Active Key badge OR Optional Activation input)
+            if (!isAdminUser) {
                 item {
-                    Card(
-                        shape = MaterialTheme.shapes.large,
-                        colors = CardDefaults.cardColors(containerColor = extendedColors.successContainer.copy(alpha = 0.55f)),
-                        border = BorderStroke(1.dp, extendedColors.success.copy(alpha = 0.35f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    if (activeAccessKey != null) {
+                        Card(
+                            shape = MaterialTheme.shapes.large,
+                            colors = CardDefaults.cardColors(containerColor = extendedColors.successContainer.copy(alpha = 0.55f)),
+                            border = BorderStroke(1.dp, extendedColors.success.copy(alpha = 0.35f)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Box(
+                            Row(
                                 modifier = Modifier
-                                    .size(42.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(extendedColors.success.copy(alpha = 0.2f)),
-                                contentAlignment = Alignment.Center
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Key,
-                                    contentDescription = "Active Access Key",
-                                    tint = extendedColors.onSuccessContainer
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(extendedColors.success.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Key,
+                                        contentDescription = "Active Access Key",
+                                        tint = extendedColors.onSuccessContainer
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Verified 1-Device Access Key",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = extendedColors.onSuccessContainer
+                                    )
+                                    Text(
+                                        text = activeAccessKey.keyCode,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
+                                        color = extendedColors.onSuccessContainer,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Locked to Device: ${DeviceIdProvider.shortLabel(deviceId)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = extendedColors.onSuccessContainer.copy(alpha = 0.85f)
+                                    )
+                                }
                             }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Verified 1-Device Access Key",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = extendedColors.onSuccessContainer
-                                )
-                                Text(
-                                    text = activeAccessKey.keyCode,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
-                                    color = extendedColors.onSuccessContainer,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Locked to Device: ${DeviceIdProvider.shortLabel(deviceId)}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = extendedColors.onSuccessContainer.copy(alpha = 0.85f)
-                                )
+                        }
+                    } else {
+                        Card(
+                            shape = MaterialTheme.shapes.large,
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Key, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                    Column {
+                                        Text("Optional Student Access Key", style = MaterialTheme.typography.titleMedium)
+                                        Text(
+                                            text = "Not required for Free access. Have a key from Admin? Enter it below (auto-transfers from old device if email matches).",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = optionalKeyInput,
+                                        onValueChange = {
+                                            optionalKeyInput = it.uppercase()
+                                                .filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                                                .take(40)
+                                        },
+                                        label = { Text("Access Key") },
+                                        placeholder = { Text("MED-XXXX-XXXX") },
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("profile_optional_key_input")
+                                    )
+                                    Button(
+                                        onClick = {
+                                            val clean = optionalKeyInput.trim().uppercase()
+                                            if (clean.length < 6) {
+                                                onPostMessage("Please enter a valid Access Key (at least 6 characters).")
+                                            } else {
+                                                onActivateOptionalKey(clean)
+                                                optionalKeyInput = ""
+                                            }
+                                        },
+                                        enabled = !isMutating && optionalKeyInput.trim().length >= 6,
+                                        modifier = Modifier
+                                            .height(54.dp)
+                                            .testTag("profile_activate_optional_key_button")
+                                    ) {
+                                        Text("Apply")
+                                    }
+                                }
                             }
                         }
                     }
@@ -439,8 +462,11 @@ fun ProfileScreen(
                 }
             }
 
-            // Offline Sync + Download MCQs Card
+            // Offline Mobile Storage Sync Card (No External File Downloads — Private In-App Offline Study)
             item {
+                val cachedMcqs = offlineStudyCache?.questions?.size ?: 0
+                val cachedCourses = offlineStudyCache?.courses?.size ?: 0
+                val cachedPosts = offlineStudyCache?.posts?.size ?: 0
                 Card(
                     shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)),
@@ -456,7 +482,7 @@ fun ProfileScreen(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.CloudDone,
+                                imageVector = Icons.Rounded.OfflinePin,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(26.dp)
@@ -468,9 +494,9 @@ fun ProfileScreen(
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                                 Text(
-                                    text = "$publishedCount published MCQs cached • Download anytime for offline study",
+                                    text = "$cachedMcqs MCQs • $cachedCourses Courses • $cachedPosts Lessons saved in mobile storage (${localStorageKb} KB)",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f)
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                                 )
                             }
                         }
@@ -485,79 +511,45 @@ fun ProfileScreen(
                             )
                         }
 
-                        Button(
-                            onClick = onSyncNow,
-                            enabled = !isSyncing,
-                            shape = MaterialTheme.shapes.medium,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("profile_sync_now_button")
-                        ) {
-                            if (isSyncing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(R.string.profile_syncing))
-                            } else {
-                                Icon(Icons.Rounded.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(R.string.profile_sync_now))
-                            }
-                        }
-
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            OutlinedButton(
-                                onClick = {
-                                    if (canDownloadPdfAndPacks) {
-                                        downloadPdfLauncher.launch("MedPrep_MCQs_Study_Sheet.pdf")
-                                    } else {
-                                        onPostMessage("MCQ PDF downloads require Basic Plan (PKR 499/mo via JazzCash).")
-                                        onOpenMoreTab(MoreMenuTab.PLANS)
-                                    }
-                                },
-                                enabled = publishedCount > 0,
+                            Button(
+                                onClick = onSyncNow,
+                                enabled = !isSyncing,
+                                shape = MaterialTheme.shapes.medium,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(46.dp)
-                                    .testTag("profile_download_pdf_button")
+                                    .height(48.dp)
+                                    .testTag("profile_sync_now_button")
                             ) {
-                                Icon(
-                                    imageVector = if (canDownloadPdfAndPacks) Icons.Rounded.PictureAsPdf else Icons.Rounded.Lock,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(if (canDownloadPdfAndPacks) "Save .PDF" else "PDF (Basic)")
+                                if (isSyncing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.profile_syncing))
+                                } else {
+                                    Icon(Icons.Rounded.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(stringResource(R.string.profile_sync_now))
+                                }
                             }
                             OutlinedButton(
-                                onClick = {
-                                    if (canDownloadPdfAndPacks) {
-                                        downloadCsvLauncher.launch("MedPrep_MCQs.csv")
-                                    } else {
-                                        onPostMessage("MCQ CSV downloads require Basic Plan (PKR 499/mo via JazzCash).")
-                                        onOpenMoreTab(MoreMenuTab.PLANS)
-                                    }
-                                },
+                                onClick = onSaveOfflineSnapshot,
                                 enabled = publishedCount > 0,
+                                shape = MaterialTheme.shapes.medium,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(46.dp)
-                                    .testTag("profile_download_csv_button")
+                                    .height(48.dp)
+                                    .testTag("profile_save_mobile_storage_button")
                             ) {
-                                Icon(
-                                    imageVector = if (canDownloadPdfAndPacks) Icons.Rounded.TableView else Icons.Rounded.Lock,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                                Icon(Icons.Rounded.SaveAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(if (canDownloadPdfAndPacks) "Save .CSV" else "CSV (Basic)")
+                                Text("Save Offline")
                             }
                         }
                     }
@@ -790,7 +782,7 @@ fun ProfileScreen(
                                 )
                             }
                             Text(
-                                text = "Admin: $adminEmail",
+                                text = "Support: $adminEmail",
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -798,13 +790,13 @@ fun ProfileScreen(
                         IconButton(
                             onClick = {
                                 clipboard.setText(AnnotatedString(adminEmail))
-                                onPostMessage("Copied admin email: $adminEmail")
+                                onPostMessage("Copied support email: $adminEmail")
                             },
                             modifier = Modifier.testTag("copy_admin_email_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.ContentCopy,
-                                contentDescription = "Copy admin email",
+                                contentDescription = "Copy support email",
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }

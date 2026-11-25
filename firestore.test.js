@@ -144,20 +144,42 @@ test("Questions & Posts: Admin-only write, Student read published only, URL vali
   );
 });
 
-test("Access Keys: 1-User 1-Device lock, anti-hijack, admin reset & revoke", async () => {
+test("Access Keys: 1-User 1-Device lock, verified-email auto-transfer, anti-hijack, admin reset & revoke", async () => {
   const adminDb = adminContext();
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const aliceVerifiedDb = testEnv
+    .authenticatedContext(ALICE_UID, {
+      email: "Alice@Student.edu",
+      email_verified: true,
+    })
+    .firestore();
+  const aliceUnverifiedDb = testEnv
+    .authenticatedContext(ALICE_UID, {
+      email: "alice@student.edu",
+      email_verified: false,
+    })
+    .firestore();
+  const aliceWrongEmailDb = testEnv
+    .authenticatedContext(ALICE_UID, {
+      email: "different@student.edu",
+      email_verified: true,
+    })
+    .firestore();
+  const bobDb = testEnv
+    .authenticatedContext(BOB_UID, {
+      email: "bob@student.edu",
+      email_verified: true,
+    })
+    .firestore();
 
   // Student cannot create access keys
-  await assertFails(aliceDb.collection("access_keys").doc("MED-FAKE-9999").set(validKeyPayload("MED-FAKE-9999", ALICE_UID)));
+  await assertFails(aliceVerifiedDb.collection("access_keys").doc("MED-FAKE-9999").set(validKeyPayload("MED-FAKE-9999", ALICE_UID)));
 
   // Admin creates a special key
   await assertSucceeds(adminDb.collection("access_keys").doc("MED-7X4K-9P2Q").set(validKeyPayload("MED-7X4K-9P2Q", ADMIN_UID)));
 
-  // Student Alice claims the unclaimed active key and locks it to her device
+  // Student Alice claims the unclaimed active key and locks it to her first device
   await assertSucceeds(
-    aliceDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
+    aliceVerifiedDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
       assignedUserId: ALICE_UID,
       assignedEmail: "alice@student.edu",
       boundDeviceId: "device_hash_alice_000111222333",
@@ -167,7 +189,7 @@ test("Access Keys: 1-User 1-Device lock, anti-hijack, admin reset & revoke", asy
   );
 
   // Alice can list her own assigned key; Bob cannot list all keys or hijack Alice's key
-  await assertSucceeds(aliceDb.collection("access_keys").where("assignedUserId", "==", ALICE_UID).get());
+  await assertSucceeds(aliceVerifiedDb.collection("access_keys").where("assignedUserId", "==", ALICE_UID).get());
   await assertFails(bobDb.collection("access_keys").get());
   await assertFails(
     bobDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
@@ -178,16 +200,66 @@ test("Access Keys: 1-User 1-Device lock, anti-hijack, admin reset & revoke", asy
       updatedAt: pastDate(500),
     })
   );
-
-  // Even Alice CANNOT swap her own device ID without Admin reset!
+  // Bob also cannot overwrite boundDeviceId on Alice's key
   await assertFails(
-    aliceDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
-      boundDeviceId: "device_hash_alice_second_phone_2",
-      updatedAt: pastDate(200),
+    bobDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
+      boundDeviceId: "device_hash_bob_999888777666",
+      activatedAt: pastDate(500),
+      updatedAt: pastDate(500),
     })
   );
 
-  // Admin CAN reset device lock & revoke key
+  // Unverified email or mismatched email CANNOT transfer device lock
+  await assertFails(
+    aliceUnverifiedDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
+      boundDeviceId: "device_hash_alice_second_phone_2",
+      activatedAt: pastDate(400),
+      updatedAt: pastDate(400),
+    })
+  );
+  await assertFails(
+    aliceWrongEmailDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
+      boundDeviceId: "device_hash_alice_second_phone_2",
+      activatedAt: pastDate(400),
+      updatedAt: pastDate(400),
+    })
+  );
+
+  // Alice WITH matching verified email + key CAN automatically transfer to her new device
+  await assertSucceeds(
+    aliceVerifiedDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
+      boundDeviceId: "device_hash_alice_second_phone_2",
+      activatedAt: pastDate(300),
+      updatedAt: pastDate(300),
+    })
+  );
+
+  // During device transfer, Alice CANNOT tamper with status or assignedEmail
+  await assertFails(
+    aliceVerifiedDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
+      boundDeviceId: "device_hash_alice_third_phone_33",
+      assignedEmail: "tampered@student.edu",
+      activatedAt: pastDate(250),
+      updatedAt: pastDate(250),
+    })
+  );
+
+  // Admin CAN revoke key; once revoked, even matching email CANNOT transfer it
+  await assertSucceeds(
+    adminDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
+      status: "revoked",
+      updatedAt: pastDate(200),
+    })
+  );
+  await assertFails(
+    aliceVerifiedDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
+      boundDeviceId: "device_hash_alice_third_phone_33",
+      activatedAt: pastDate(150),
+      updatedAt: pastDate(150),
+    })
+  );
+
+  // Admin CAN reset device lock on a revoked key, and Bob still CANNOT claim a revoked key
   await assertSucceeds(
     adminDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
       assignedUserId: "",
@@ -197,8 +269,6 @@ test("Access Keys: 1-User 1-Device lock, anti-hijack, admin reset & revoke", asy
       updatedAt: pastDate(100),
     })
   );
-
-  // Student CANNOT claim a revoked key
   await assertFails(
     bobDb.collection("access_keys").doc("MED-7X4K-9P2Q").update({
       assignedUserId: BOB_UID,

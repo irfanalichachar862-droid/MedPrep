@@ -1302,7 +1302,7 @@ class MedPrepRepository(
         }
     }
 
-    suspend fun activateAccessKey(rawKeyCode: String, deviceId: String): Result<AccessKey> {
+    suspend fun activateAccessKey(rawKeyCode: String, deviceId: String): Result<KeyActivationOutcome> {
         val keyCode = rawKeyCode.trim().uppercase()
         var docPath = "access_keys/$keyCode"
         return try {
@@ -1330,9 +1330,9 @@ class MedPrepRepository(
                 return Result.failure(IllegalStateException("This Access Key has been revoked by Admin."))
             }
 
+            val safeEmail = user.email?.trim()?.lowercase()?.take(160).orEmpty()
             val isUnclaimed = existingKey.assignedUserId.isBlank() && existingKey.boundDeviceId.isBlank()
             if (isUnclaimed) {
-                val safeEmail = user.email?.trim()?.take(160).orEmpty()
                 docRef.update(
                     mapOf(
                         "assignedUserId" to uid,
@@ -1347,21 +1347,41 @@ class MedPrepRepository(
                     assignedEmail = safeEmail,
                     boundDeviceId = deviceId
                 )
-                return Result.success(claimed)
+                return Result.success(KeyActivationOutcome(key = claimed, transferredFromOldDevice = false))
             }
 
             if (existingKey.assignedUserId == uid && existingKey.boundDeviceId == deviceId) {
-                return Result.success(existingKey)
+                return Result.success(KeyActivationOutcome(key = existingKey, transferredFromOldDevice = false))
+            }
+
+            // Automatic device transfer: if verified Email + Access Key match the key owner,
+            // update boundDeviceId to this new device (the old device automatically logs out via live listener)
+            val keyEmail = existingKey.assignedEmail.trim().lowercase()
+            if (existingKey.assignedUserId == uid &&
+                user.isEmailVerified &&
+                safeEmail.isNotBlank() &&
+                keyEmail.isNotBlank() &&
+                safeEmail == keyEmail
+            ) {
+                docRef.update(
+                    mapOf(
+                        "boundDeviceId" to deviceId,
+                        "activatedAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+                val transferred = existingKey.copy(boundDeviceId = deviceId)
+                return Result.success(KeyActivationOutcome(key = transferred, transferredFromOldDevice = true))
             }
 
             if (existingKey.assignedUserId == uid && existingKey.boundDeviceId != deviceId) {
                 return Result.failure(
-                    IllegalStateException("This key is locked to another device. Ask Admin (${MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL}) to reset your device lock.")
+                    IllegalStateException("Your verified email could not be matched to this key. Contact Support (${MedPrepConstants.SUPPORT_EMAIL}) to reset your device lock.")
                 )
             }
 
             Result.failure(
-                IllegalStateException("This Access Key is already in use by another student account.")
+                IllegalStateException("This Access Key is registered to a different email account. Sign in with the matching email to transfer it here.")
             )
         } catch (e: CancellationException) {
             throw e

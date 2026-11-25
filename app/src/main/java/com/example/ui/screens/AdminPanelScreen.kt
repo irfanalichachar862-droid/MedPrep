@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Publish
 import androidx.compose.material.icons.rounded.School
@@ -82,6 +83,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -107,6 +109,7 @@ import com.example.data.CsvMcqParser
 import com.example.data.CsvParseResult
 import com.example.data.McqQuestion
 import com.example.data.MedPrepConstants
+import com.example.data.PdfMcqExporter
 import com.example.data.QuestionDraftInput
 import com.example.data.SpreadsheetMcqReader
 import com.example.data.StudyPost
@@ -121,6 +124,9 @@ import com.example.ui.components.LiquidGlassTabItem
 import com.example.ui.theme.LocalMedPrepColors
 import com.example.ui.theme.MonoFontFamily
 import com.example.ui.theme.subjectVisualFor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class AdminSection(val labelRes: Int, val icon: ImageVector, val tag: String) {
     OVERVIEW(R.string.admin_tab_overview, Icons.Rounded.Analytics, "admin_tab_overview"),
@@ -204,24 +210,33 @@ fun AdminPanelScreen(
     var fileParseResult by remember { mutableStateOf<CsvParseResult?>(null) }
     var importAsPublished by remember { mutableStateOf(true) }
 
+    val scope = rememberCoroutineScope()
+
     val openSpreadsheetLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                val fileName = resolveFileName(context, uri)
-                val defaultStatus = if (importAsPublished) "published" else "draft"
-                val parsed = context.contentResolver.openInputStream(uri)?.use { stream ->
-                    SpreadsheetMcqReader.parseStream(stream, fileName, defaultStatus)
-                } ?: CsvParseResult(emptyList(), listOf("Could not open selected file."))
-
-                uploadedFileName = fileName ?: "Spreadsheet"
-                fileParseResult = parsed
-                pastedSheetText = ""
-                activeSection = AdminSection.EXCEL
-                onPostMessage("Loaded ${parsed.validQuestions.size} MCQs from $uploadedFileName.")
-            } catch (e: Exception) {
-                onPostMessage("Failed to read Excel/CSV file: ${e.localizedMessage ?: "Unknown error"}")
+            val appContext = context.applicationContext
+            val defaultStatus = if (importAsPublished) "published" else "draft"
+            scope.launch(Dispatchers.IO) {
+                val result = runCatching {
+                    val fileName = resolveFileName(appContext, uri)
+                    val parsed = appContext.contentResolver.openInputStream(uri)?.use { stream ->
+                        SpreadsheetMcqReader.parseStream(stream, fileName, defaultStatus)
+                    } ?: CsvParseResult(emptyList(), listOf("Could not open selected file."))
+                    (fileName ?: "Spreadsheet") to parsed
+                }
+                withContext(Dispatchers.Main) {
+                    result.onSuccess { (resolvedName, parsed) ->
+                        uploadedFileName = resolvedName
+                        fileParseResult = parsed
+                        pastedSheetText = ""
+                        activeSection = AdminSection.EXCEL
+                        onPostMessage("Loaded ${parsed.validQuestions.size} MCQs from $resolvedName.")
+                    }.onFailure { e ->
+                        onPostMessage("Failed to read Excel/CSV file: ${e.localizedMessage ?: "Unknown error"}")
+                    }
+                }
             }
         }
     }
@@ -230,13 +245,20 @@ fun AdminPanelScreen(
         contract = ActivityResultContracts.CreateDocument("text/csv")
     ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(CsvMcqParser.TEMPLATE_CSV.toByteArray(Charsets.UTF_8))
+            val appContext = context.applicationContext
+            scope.launch(Dispatchers.IO) {
+                val result = runCatching {
+                    appContext.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(CsvMcqParser.TEMPLATE_CSV.toByteArray(Charsets.UTF_8))
+                    } ?: error("Could not open destination file")
                 }
-                onPostMessage("Template saved with Reason & YouTube columns! Open in Excel and upload.")
-            } catch (e: Exception) {
-                onPostMessage("Could not save template: ${e.localizedMessage ?: "Error"}")
+                withContext(Dispatchers.Main) {
+                    result.onSuccess {
+                        onPostMessage("Template saved with Reason & YouTube columns! Open in Excel and upload.")
+                    }.onFailure { e ->
+                        onPostMessage("Could not save template: ${e.localizedMessage ?: "Error"}")
+                    }
+                }
             }
         }
     }
@@ -245,15 +267,54 @@ fun AdminPanelScreen(
         contract = ActivityResultContracts.CreateDocument("text/csv")
     ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                val coreOnly = questions.filter { MedPrepConstants.isCoreSubject(it.subject) }
-                val csv = SpreadsheetMcqReader.exportQuestionsToCsv(coreOnly)
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(csv.toByteArray(Charsets.UTF_8))
+            val appContext = context.applicationContext
+            val snapshot = questions
+            scope.launch(Dispatchers.IO) {
+                val result = runCatching {
+                    val coreOnly = snapshot.filter { MedPrepConstants.isCoreSubject(it.subject) }
+                    val csv = SpreadsheetMcqReader.exportQuestionsToCsv(coreOnly)
+                    appContext.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(csv.toByteArray(Charsets.UTF_8))
+                    } ?: error("Could not open destination file")
+                    coreOnly.size
                 }
-                onPostMessage("Exported ${coreOnly.size} MCQs to spreadsheet.")
-            } catch (e: Exception) {
-                onPostMessage("Export failed: ${e.localizedMessage ?: "Error"}")
+                withContext(Dispatchers.Main) {
+                    result.onSuccess { count ->
+                        onPostMessage("Exported $count MCQs to spreadsheet.")
+                    }.onFailure { e ->
+                        onPostMessage("Export failed: ${e.localizedMessage ?: "Error"}")
+                    }
+                }
+            }
+        }
+    }
+
+    val exportPdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val appContext = context.applicationContext
+            val snapshot = questions
+            scope.launch(Dispatchers.IO) {
+                val result = runCatching {
+                    val coreOnly = snapshot.filter { MedPrepConstants.isCoreSubject(it.subject) }
+                    appContext.contentResolver.openOutputStream(uri)?.use { out ->
+                        PdfMcqExporter.writeMcqsPdf(
+                            outputStream = out,
+                            title = "MedPrep — Admin Master MCQ Bank",
+                            subtitle = "5-Subject Question Bank with Answer Keys & Reasons",
+                            questions = coreOnly
+                        )
+                    } ?: error("Could not open destination file")
+                    coreOnly.size
+                }
+                withContext(Dispatchers.Main) {
+                    result.onSuccess { count ->
+                        onPostMessage("Downloaded $count MCQs as PDF (Admin Only).")
+                    }.onFailure { e ->
+                        onPostMessage("PDF download failed: ${e.localizedMessage ?: "Error"}")
+                    }
+                }
             }
         }
     }
@@ -288,7 +349,7 @@ fun AdminPanelScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL,
+                                text = "Support: ${MedPrepConstants.SUPPORT_EMAIL}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -379,14 +440,17 @@ fun AdminPanelScreen(
             }
         },
         bottomBar = {
-            val adminGlassTabs = AdminSection.entries.map { section ->
-                LiquidGlassTabItem(
-                    id = section.name,
-                    label = stringResource(section.labelRes),
-                    selectedIcon = section.icon,
-                    unselectedIcon = section.icon,
-                    testTag = section.tag
-                )
+            val adminTabLabels = AdminSection.entries.map { stringResource(it.labelRes) }
+            val adminGlassTabs = remember(adminTabLabels) {
+                AdminSection.entries.mapIndexed { idx, section ->
+                    LiquidGlassTabItem(
+                        id = section.name,
+                        label = adminTabLabels[idx],
+                        selectedIcon = section.icon,
+                        unselectedIcon = section.icon,
+                        testTag = section.tag
+                    )
+                }
             }
             Box(
                 modifier = Modifier
@@ -433,6 +497,7 @@ fun AdminPanelScreen(
                     onCleanupLegacySubjects = onCleanupLegacySubjects,
                     onLoadStarterPack = onLoadStarterPack,
                     onExportBank = { exportBankLauncher.launch("medprep_question_bank.csv") },
+                    onExportPdf = { exportPdfLauncher.launch("MedPrep_Admin_MCQ_Bank.pdf") },
                     onDownloadTemplate = { downloadTemplateLauncher.launch("medprep_excel_template.csv") }
                 )
 
@@ -701,6 +766,7 @@ private fun AdminOverviewTab(
     onCleanupLegacySubjects: () -> Unit,
     onLoadStarterPack: () -> Unit,
     onExportBank: () -> Unit,
+    onExportPdf: () -> Unit,
     onDownloadTemplate: () -> Unit
 ) {
     val extendedColors = LocalMedPrepColors.current
@@ -863,18 +929,30 @@ private fun AdminOverviewTab(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         OutlinedButton(
+                            onClick = onExportPdf,
+                            enabled = coreQuestions.isNotEmpty(),
+                            modifier = Modifier.weight(1f).height(46.dp).testTag("admin_export_pdf_btn")
+                        ) {
+                            Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Download PDF")
+                        }
+                        OutlinedButton(
                             onClick = onExportBank,
                             enabled = coreQuestions.isNotEmpty(),
-                            modifier = Modifier.weight(1f).height(44.dp).testTag("admin_export_bank_btn")
+                            modifier = Modifier.weight(1f).height(46.dp).testTag("admin_export_bank_btn")
                         ) {
                             Icon(Icons.Rounded.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Export CSV")
                         }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         TextButton(onClick = onDownloadTemplate, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Rounded.TableView, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Template")
+                            Text("CSV Template")
                         }
                         TextButton(
                             onClick = onLoadStarterPack,

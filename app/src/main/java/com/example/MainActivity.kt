@@ -98,7 +98,8 @@ private data class AppShellState(
     val appearanceConfig: AppAppearanceConfig,
     val functionalSettings: AppFunctionalSettings,
     val entryMode: AppEntryMode,
-    val pendingAccessKey: String
+    val pendingAccessKey: String,
+    val activeStudentSessionUid: String
 )
 
 class MainActivity : ComponentActivity() {
@@ -126,6 +127,7 @@ class MainActivity : ComponentActivity() {
                     val settings = ThemePreferences.loadFunctionalSettings(appContext)
                     val savedEntryMode = ThemePreferences.loadEntryMode(appContext)
                     val savedPendingKey = ThemePreferences.loadPendingAccessKey(appContext)
+                    val savedActiveStudentUid = ThemePreferences.loadActiveStudentSessionUid(appContext)
                     val deviceId = DeviceIdProvider.getDeviceId(appContext)
                     val auth = Firebase.auth
                     val repo = MedPrepRepository(appContext)
@@ -139,7 +141,8 @@ class MainActivity : ComponentActivity() {
                         appearanceConfig = appearance,
                         functionalSettings = settings,
                         entryMode = savedEntryMode,
-                        pendingAccessKey = savedPendingKey
+                        pendingAccessKey = savedPendingKey,
+                        activeStudentSessionUid = savedActiveStudentUid
                     )
                 }
                 shellState = loaded
@@ -170,40 +173,58 @@ class MainActivity : ComponentActivity() {
                             .background(MaterialTheme.colorScheme.background)
                     )
                 } else {
+                    val appCtx = context.applicationContext
                     MedPrepAppRoot(
                         shell = currentShell,
                         isDarkTheme = resolvedDarkTheme,
                         onSelectEntryMode = { mode, key ->
                             shellState = shellState?.copy(entryMode = mode, pendingAccessKey = key)
-                            ThemePreferences.saveEntryMode(context, mode)
-                            ThemePreferences.savePendingAccessKey(context, key)
+                            scope.launch(Dispatchers.IO) {
+                                ThemePreferences.saveEntryMode(appCtx, mode)
+                                ThemePreferences.savePendingAccessKey(appCtx, key)
+                            }
                         },
                         onClearPendingAccessKey = {
                             shellState = shellState?.copy(pendingAccessKey = "")
-                            ThemePreferences.savePendingAccessKey(context, "")
+                            scope.launch(Dispatchers.IO) {
+                                ThemePreferences.savePendingAccessKey(appCtx, "")
+                            }
+                        },
+                        onSetActiveStudentSessionUid = { uid ->
+                            if (shellState?.activeStudentSessionUid != uid) {
+                                shellState = shellState?.copy(activeStudentSessionUid = uid)
+                                scope.launch(Dispatchers.IO) {
+                                    ThemePreferences.saveActiveStudentSessionUid(appCtx, uid)
+                                }
+                            }
                         },
                         onUpdateAppearance = { updated ->
                             shellState = shellState?.copy(appearanceConfig = updated)
-                            ThemePreferences.saveAppearanceConfig(context, updated)
+                            scope.launch(Dispatchers.IO) {
+                                ThemePreferences.saveAppearanceConfig(appCtx, updated)
+                            }
                         },
                         onUpdateFunctionalSettings = { updated ->
                             shellState = shellState?.copy(functionalSettings = updated)
-                            ThemePreferences.saveFunctionalSettings(context, updated)
-                            val appCtx = context.applicationContext
                             scope.launch(Dispatchers.IO) {
+                                ThemePreferences.saveFunctionalSettings(appCtx, updated)
                                 MedPrepNotificationHelper.syncSchedule(appCtx, updated)
                             }
                         },
                         onSelectThemeMode = { newMode ->
                             val updated = appearanceConfig.copy(themeMode = newMode)
                             shellState = shellState?.copy(appearanceConfig = updated)
-                            ThemePreferences.saveAppearanceConfig(context, updated)
+                            scope.launch(Dispatchers.IO) {
+                                ThemePreferences.saveAppearanceConfig(appCtx, updated)
+                            }
                         },
                         onToggleTheme = {
                             val nextMode = if (resolvedDarkTheme) AppThemeMode.LIGHT else AppThemeMode.DARK
                             val updated = appearanceConfig.copy(themeMode = nextMode)
                             shellState = shellState?.copy(appearanceConfig = updated)
-                            ThemePreferences.saveAppearanceConfig(context, updated)
+                            scope.launch(Dispatchers.IO) {
+                                ThemePreferences.saveAppearanceConfig(appCtx, updated)
+                            }
                         }
                     )
                 }
@@ -231,6 +252,7 @@ private fun MedPrepAppRoot(
     isDarkTheme: Boolean,
     onSelectEntryMode: (AppEntryMode, String) -> Unit,
     onClearPendingAccessKey: () -> Unit,
+    onSetActiveStudentSessionUid: (String) -> Unit,
     onUpdateAppearance: (AppAppearanceConfig) -> Unit,
     onUpdateFunctionalSettings: (AppFunctionalSettings) -> Unit,
     onSelectThemeMode: (AppThemeMode) -> Unit,
@@ -238,12 +260,15 @@ private fun MedPrepAppRoot(
 ) {
     val authFlow = remember(shell.auth) { shell.auth.authStateFlow() }
     val currentUser by authFlow.collectAsStateWithLifecycle(initialValue = shell.auth.currentUser)
+    var forcedLogoutNotice by rememberSaveable { mutableStateOf<String?>(null) }
 
     val user = currentUser
     if (user == null) {
         AuthScreen(
+            forcedLogoutNotice = forcedLogoutNotice,
+            onDismissForcedLogoutNotice = { forcedLogoutNotice = null },
             onSelectEntryMode = onSelectEntryMode,
-            onAuthSuccess = { /* AuthStateListener updates currentUser reactively */ }
+            onAuthSuccess = { forcedLogoutNotice = null }
         )
     } else {
         key(user.uid) {
@@ -256,9 +281,12 @@ private fun MedPrepAppRoot(
                 functionalSettings = shell.functionalSettings,
                 entryMode = shell.entryMode,
                 pendingAccessKey = shell.pendingAccessKey,
+                activeStudentSessionUid = shell.activeStudentSessionUid,
                 isDarkTheme = isDarkTheme,
                 onChangeEntryMode = { newMode -> onSelectEntryMode(newMode, "") },
                 onClearPendingAccessKey = onClearPendingAccessKey,
+                onSetActiveStudentSessionUid = onSetActiveStudentSessionUid,
+                onSetForcedLogoutNotice = { notice -> forcedLogoutNotice = notice },
                 onUpdateAppearance = onUpdateAppearance,
                 onUpdateFunctionalSettings = onUpdateFunctionalSettings,
                 onSelectThemeMode = onSelectThemeMode,
@@ -278,9 +306,12 @@ private fun AuthenticatedMedPrepShell(
     functionalSettings: AppFunctionalSettings,
     entryMode: AppEntryMode,
     pendingAccessKey: String,
+    activeStudentSessionUid: String,
     isDarkTheme: Boolean,
     onChangeEntryMode: (AppEntryMode) -> Unit,
     onClearPendingAccessKey: () -> Unit,
+    onSetActiveStudentSessionUid: (String) -> Unit,
+    onSetForcedLogoutNotice: (String?) -> Unit,
     onUpdateAppearance: (AppAppearanceConfig) -> Unit,
     onUpdateFunctionalSettings: (AppFunctionalSettings) -> Unit,
     onSelectThemeMode: (AppThemeMode) -> Unit,
@@ -316,6 +347,7 @@ private fun AuthenticatedMedPrepShell(
 
     val performSignOut: () -> Unit = {
         onClearPendingAccessKey()
+        onSetActiveStudentSessionUid("")
         val credentialManager = CredentialManager.create(context)
         signOutGoogle(credentialManager = credentialManager, scope = scope)
     }
@@ -323,64 +355,66 @@ private fun AuthenticatedMedPrepShell(
     var adminPreviewingStudent by rememberSaveable { mutableStateOf(false) }
     var activeHtmlLesson by remember { mutableStateOf<Pair<StudyPost, Boolean>?>(null) }
     var activeMoreMenuTab by rememberSaveable { mutableStateOf<MoreMenuTab?>(null) }
+    var forcedLogoutTriggered by remember { mutableStateOf(false) }
 
-    // 0. Full-Screen Interactive HTML Topic Lesson Viewer
     val lessonEntry = activeHtmlLesson
-    if (lessonEntry != null) {
-        InteractiveLessonHost(
-            viewModel = viewModel,
-            lessonPost = lessonEntry.first,
-            isAdminPreviewMode = lessonEntry.second,
-            hasActiveQuiz = activeQuiz != null,
-            isDarkTheme = isDarkTheme,
-            onPracticeLinkedMcqs = { post ->
-                activeHtmlLesson = null
-                viewModel.startLinkedMcqsForPost(post)
-            },
-            onBack = { activeHtmlLesson = null }
-        )
-        return
-    }
 
-    // 1. Active Quiz / Timed Exam / Interactive Offline Pack Player
-    val quiz = activeQuiz
-    if (quiz != null) {
-        ActiveQuizHost(
-            viewModel = viewModel,
-            quiz = quiz,
-            functionalSettings = functionalSettings,
-            onOpenInteractiveLesson = { post -> activeHtmlLesson = post to false },
-            onOpenPlansTab = {
-                viewModel.exitQuizSession()
-                activeMoreMenuTab = MoreMenuTab.PLANS
-            }
-        )
-        return
-    }
-
-    // 2. STRICT ADMIN APP PORTAL (Only collects Admin Firestore flows)
+    // 1. STRICT ADMIN APP PORTAL (Admin Portal + Admin HTML Preview — bypasses student key gate)
     if (isAdminUser && entryMode == AppEntryMode.ADMIN && !adminPreviewingStudent) {
-        AdminPortalHost(
-            viewModel = viewModel,
-            isDarkTheme = isDarkTheme,
-            isMutating = isMutating,
-            snackbarHostState = snackbarHostState,
-            onToggleTheme = onToggleTheme,
-            onPreviewHtmlLesson = { post -> activeHtmlLesson = post to true },
-            onPreviewStudentApp = { adminPreviewingStudent = true },
-            onSignOut = performSignOut
-        )
+        if (lessonEntry != null && lessonEntry.second) {
+            InteractiveLessonHost(
+                viewModel = viewModel,
+                lessonPost = lessonEntry.first,
+                isAdminPreviewMode = true,
+                hasActiveQuiz = false,
+                isDarkTheme = isDarkTheme,
+                onPracticeLinkedMcqs = {},
+                onBack = { activeHtmlLesson = null }
+            )
+        } else {
+            AdminPortalHost(
+                viewModel = viewModel,
+                isDarkTheme = isDarkTheme,
+                isMutating = isMutating,
+                snackbarHostState = snackbarHostState,
+                onToggleTheme = onToggleTheme,
+                onPreviewHtmlLesson = { post -> activeHtmlLesson = post to true },
+                onPreviewStudentApp = { adminPreviewingStudent = true },
+                onSignOut = performSignOut
+            )
+        }
         return
     }
 
-    // 3. STUDENT ACCESS KEY & 1-DEVICE LOCK GATE (Only collects access key flows until unlocked)
+    // 2. LIVE STUDENT ACCESS KEY & 1-DEVICE SESSION WATCHER
+    // Observed above quizzes & lessons so an old device logs out immediately if the matching email + key sign in elsewhere
     val studentAccessStatus by viewModel.studentAccessStatus.collectAsStateWithLifecycle()
     val strictKeyAccessStatus by viewModel.strictKeyAccessStatus.collectAsStateWithLifecycle()
+    val requiresStudentKey = !isAdminUser || entryMode == AppEntryMode.STUDENT_KEY
 
+    val effectiveAccessStatus = if (entryMode == AppEntryMode.STUDENT_KEY) {
+        strictKeyAccessStatus
+    } else {
+        studentAccessStatus
+    }
+
+    // Record that THIS device actively holds a bound Access Key for currentUserId
+    // (only when a key is bound, so non-key Free users are unaffected while key transfers auto-logout old devices)
+    LaunchedEffect(requiresStudentKey, effectiveAccessStatus, currentUserId) {
+        if (requiresStudentKey &&
+            effectiveAccessStatus is StudentAccessStatus.Unlocked &&
+            effectiveAccessStatus.key != null
+        ) {
+            onSetActiveStudentSessionUid(currentUserId)
+        }
+    }
+
+    // OPTIONAL KEY: Automatically claim or transfer the key if the student entered one on AuthScreen
     LaunchedEffect(entryMode, pendingAccessKey, strictKeyAccessStatus) {
         if (entryMode == AppEntryMode.STUDENT_KEY &&
             pendingAccessKey.isNotBlank() &&
-            strictKeyAccessStatus is StudentAccessStatus.NeedsKey
+            (strictKeyAccessStatus is StudentAccessStatus.NeedsKey ||
+                strictKeyAccessStatus is StudentAccessStatus.DeviceMismatch)
         ) {
             val codeToActivate = pendingAccessKey
             onClearPendingAccessKey()
@@ -388,14 +422,28 @@ private fun AuthenticatedMedPrepShell(
         }
     }
 
-    val effectiveAccessStatus = if (entryMode == AppEntryMode.STUDENT_KEY) {
-        strictKeyAccessStatus
-    } else {
-        studentAccessStatus
+    // OLD DEVICE: Automatically log out when this device previously held a bound key and another device took over
+    LaunchedEffect(requiresStudentKey, effectiveAccessStatus, activeStudentSessionUid, pendingAccessKey, forcedLogoutTriggered) {
+        if (requiresStudentKey &&
+            !forcedLogoutTriggered &&
+            effectiveAccessStatus is StudentAccessStatus.DeviceMismatch &&
+            activeStudentSessionUid == currentUserId &&
+            pendingAccessKey.isBlank()
+        ) {
+            forcedLogoutTriggered = true
+            viewModel.exitQuizSession()
+            activeHtmlLesson = null
+            activeMoreMenuTab = null
+            onSetForcedLogoutNotice(
+                "You were automatically logged out because your email and Access Key (${effectiveAccessStatus.key.keyCode}) were signed in on another device."
+            )
+            performSignOut()
+        }
     }
-    if ((!isAdminUser || entryMode == AppEntryMode.STUDENT_KEY) &&
-        effectiveAccessStatus !is StudentAccessStatus.Unlocked
-    ) {
+
+    // Access Key is now OPTIONAL: students without a key enter directly on the Free plan.
+    // Only block if an admin explicitly revoked this student's bound key.
+    if (requiresStudentKey && effectiveAccessStatus is StudentAccessStatus.Revoked) {
         val keyActivationError by viewModel.keyActivationError.collectAsStateWithLifecycle()
         AccessKeyGateScreen(
             accessStatus = effectiveAccessStatus,
@@ -413,6 +461,39 @@ private fun AuthenticatedMedPrepShell(
                 onChangeEntryMode(AppEntryMode.ADMIN)
             }) else null,
             onSignOut = performSignOut
+        )
+        return
+    }
+
+    // 3. Full-Screen Interactive HTML Topic Lesson Viewer (Student)
+    if (lessonEntry != null) {
+        InteractiveLessonHost(
+            viewModel = viewModel,
+            lessonPost = lessonEntry.first,
+            isAdminPreviewMode = lessonEntry.second,
+            hasActiveQuiz = activeQuiz != null,
+            isDarkTheme = isDarkTheme,
+            onPracticeLinkedMcqs = { post ->
+                activeHtmlLesson = null
+                viewModel.startLinkedMcqsForPost(post)
+            },
+            onBack = { activeHtmlLesson = null }
+        )
+        return
+    }
+
+    // 4. Active Quiz / Timed Exam / Interactive Offline Pack Player
+    val quiz = activeQuiz
+    if (quiz != null) {
+        ActiveQuizHost(
+            viewModel = viewModel,
+            quiz = quiz,
+            functionalSettings = functionalSettings,
+            onOpenInteractiveLesson = { post -> activeHtmlLesson = post to false },
+            onOpenPlansTab = {
+                viewModel.exitQuizSession()
+                activeMoreMenuTab = MoreMenuTab.PLANS
+            }
         )
         return
     }
@@ -539,12 +620,29 @@ private fun AdminPortalHost(
     onPreviewStudentApp: () -> Unit,
     onSignOut: () -> Unit
 ) {
+    var streamsReady by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        withFrameNanos { }
+        streamsReady = true
+    }
+
     val studioState by viewModel.studioQuestionsState.collectAsStateWithLifecycle()
-    val adminCoursesState by viewModel.adminCoursesState.collectAsStateWithLifecycle()
-    val adminPostsState by viewModel.adminPostsState.collectAsStateWithLifecycle()
-    val allAccessKeysState by viewModel.allAccessKeysState.collectAsStateWithLifecycle()
-    val allUsersState by viewModel.allUsersState.collectAsStateWithLifecycle()
-    val allSubscriptionRequestsState by viewModel.allSubscriptionRequestsState.collectAsStateWithLifecycle()
+    val adminCoursesState = if (streamsReady) {
+        viewModel.adminCoursesState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
+    val adminPostsState = if (streamsReady) {
+        viewModel.adminPostsState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
+    val allAccessKeysState = if (streamsReady) {
+        viewModel.allAccessKeysState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
+    val allUsersState = if (streamsReady) {
+        viewModel.allUsersState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
+    val allSubscriptionRequestsState = if (streamsReady) {
+        viewModel.allSubscriptionRequestsState.collectAsStateWithLifecycle().value
+    } else UiState.Loading
 
     AdminPanelScreen(
         studioQuestionsState = studioState,
@@ -618,17 +716,95 @@ private fun StudentUnlockedHost(
 
     val profileState by viewModel.userProfileState.collectAsStateWithLifecycle()
     val publishedState by viewModel.publishedQuestionsState.collectAsStateWithLifecycle()
+    val publishedCoursesState by viewModel.publishedCoursesState.collectAsStateWithLifecycle()
+    val publishedPostsState by viewModel.publishedPostsState.collectAsStateWithLifecycle()
     val attemptsMap by viewModel.attemptsMapState.collectAsStateWithLifecycle()
     val downloadedPacks by viewModel.downloadedPacks.collectAsStateWithLifecycle()
+    val offlineStudyCache by viewModel.offlineStudyCache.collectAsStateWithLifecycle()
+    val localStorageKb by viewModel.localStorageKb.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
 
     val activePlan = SubscriptionPlanTier.fromKey((profileState as? UiState.Success)?.data?.subscriptionPlan)
     val maxPracticeCap = PlanEntitlements.maxPracticeQuestionsPerSession(activePlan)
 
-    val corePublishedQuestions = remember(publishedState) {
+    val onlineCoreQuestions = remember(publishedState) {
         (publishedState as? UiState.Success)?.data
             ?.filter { MedPrepConstants.isCoreSubject(it.subject) }
             .orEmpty()
+    }
+    val onlineCourses = remember(publishedCoursesState) {
+        (publishedCoursesState as? UiState.Success)?.data.orEmpty()
+    }
+    val onlinePosts = remember(publishedPostsState) {
+        (publishedPostsState as? UiState.Success)?.data.orEmpty()
+    }
+
+    // Automatically save core MCQs, Courses & Study Posts into private mobile storage for offline study
+    LaunchedEffect(onlineCoreQuestions, onlineCourses, onlinePosts) {
+        if (onlineCoreQuestions.isNotEmpty() || onlineCourses.isNotEmpty() || onlinePosts.isNotEmpty()) {
+            viewModel.autoCacheStudyData(
+                context = context,
+                questions = onlineCoreQuestions,
+                courses = onlineCourses,
+                posts = onlinePosts
+            )
+        }
+    }
+
+    // Seamless offline fallback to private mobile storage whenever network/Firestore is unavailable
+    val effectivePublishedState = remember(publishedState, offlineStudyCache) {
+        when (val s = publishedState) {
+            is UiState.Success -> {
+                if (s.data.isNotEmpty()) s
+                else offlineStudyCache?.questions?.takeIf { it.isNotEmpty() }?.let { UiState.Success(it) } ?: s
+            }
+            is UiState.Loading, is UiState.Error -> {
+                offlineStudyCache?.questions?.takeIf { it.isNotEmpty() }?.let { UiState.Success(it) } ?: s
+            }
+        }
+    }
+    val effectiveCoursesState = remember(publishedCoursesState, offlineStudyCache) {
+        when (val s = publishedCoursesState) {
+            is UiState.Success -> {
+                if (s.data.isNotEmpty()) s
+                else offlineStudyCache?.courses?.takeIf { it.isNotEmpty() }?.let { UiState.Success(it) } ?: s
+            }
+            is UiState.Loading, is UiState.Error -> {
+                offlineStudyCache?.courses?.takeIf { it.isNotEmpty() }?.let { UiState.Success(it) } ?: s
+            }
+        }
+    }
+    val effectivePostsState = remember(publishedPostsState, offlineStudyCache) {
+        when (val s = publishedPostsState) {
+            is UiState.Success -> {
+                if (s.data.isNotEmpty()) s
+                else offlineStudyCache?.posts?.takeIf { it.isNotEmpty() }?.let { UiState.Success(it) } ?: s
+            }
+            is UiState.Loading, is UiState.Error -> {
+                offlineStudyCache?.posts?.takeIf { it.isNotEmpty() }?.let { UiState.Success(it) } ?: s
+            }
+        }
+    }
+    val isOfflineFallbackActive = publishedState !is UiState.Success && (offlineStudyCache?.questions?.isNotEmpty() == true)
+
+    val corePublishedQuestions = remember(effectivePublishedState) {
+        (effectivePublishedState as? UiState.Success)?.data
+            ?.filter { MedPrepConstants.isCoreSubject(it.subject) }
+            .orEmpty()
+    }
+    val effectivePostsList = remember(effectivePostsState) {
+        (effectivePostsState as? UiState.Success)?.data.orEmpty()
+    }
+
+    val saveOfflineSnapshotNow: () -> Unit = {
+        viewModel.autoCacheStudyData(
+            context = context,
+            questions = corePublishedQuestions,
+            courses = (effectiveCoursesState as? UiState.Success)?.data.orEmpty(),
+            posts = effectivePostsList,
+            force = true,
+            showToast = true
+        )
     }
 
     // 4. THREE-DOTS (⋮) LIQUID GLASS 8-TAB MENU HUB
@@ -646,6 +822,8 @@ private fun StudentUnlockedHost(
             studyNotes = studyNotes,
             difficultQuestions = difficultQuestions,
             downloadedPacks = downloadedPacks,
+            offlineStudyCache = offlineStudyCache,
+            localStorageKb = localStorageKb,
             userSubscriptionRequests = userSubscriptionRequests,
             activeAccessKey = activeKey,
             deviceId = deviceId,
@@ -661,6 +839,7 @@ private fun StudentUnlockedHost(
             onSaveFullProfile = { name, exam, goal, email, phone, days ->
                 viewModel.saveProfilePreferences(name, exam, goal, email, phone, days)
             },
+            onActivateOptionalKey = viewModel::activateStudentKey,
             onSubmitPaymentRequest = viewModel::submitSubscriptionPaymentRequest,
             onCancelPendingRequest = viewModel::cancelSubscriptionRequest,
             onSaveScheduleDays = viewModel::saveScheduleDays,
@@ -687,18 +866,12 @@ private fun StudentUnlockedHost(
             onDeleteOfflinePack = { packId ->
                 viewModel.deleteOfflineInteractivePack(context, packId)
             },
+            onSaveOfflineSnapshotNow = saveOfflineSnapshotNow,
+            onClearOfflineCache = { viewModel.clearOfflineStudyCache(context) },
             onSaveNote = viewModel::saveStudyNote,
             onDeleteNote = viewModel::deleteStudyNote,
             onSaveDifficultQuestion = viewModel::saveDifficultQuestion,
             onDeleteDifficultQuestion = viewModel::deleteDifficultQuestion,
-            onImportBackup = { payload ->
-                viewModel.importBackupPayload(
-                    context = context,
-                    payload = payload,
-                    onApplyAppearance = onUpdateAppearance,
-                    onApplySettings = onUpdateFunctionalSettings
-                )
-            },
             onSyncNow = viewModel::syncNow,
             onOpenAdminPanel = if (isAdminUser) onReturnToAdminPortal else null,
             onSignOut = onSignOut,
@@ -717,36 +890,42 @@ private fun StudentUnlockedHost(
         BackHandler { onExitAdminPreview() }
     }
 
-    val navGlassItems = listOf(
-        LiquidGlassTabItem(
-            id = StudentTab.STUDY.id,
-            label = stringResource(StudentTab.STUDY.labelRes),
-            selectedIcon = StudentTab.STUDY.selectedIcon,
-            unselectedIcon = StudentTab.STUDY.unselectedIcon,
-            testTag = StudentTab.STUDY.tag
-        ),
-        LiquidGlassTabItem(
-            id = StudentTab.COURSES.id,
-            label = stringResource(StudentTab.COURSES.labelRes),
-            selectedIcon = StudentTab.COURSES.selectedIcon,
-            unselectedIcon = StudentTab.COURSES.unselectedIcon,
-            testTag = StudentTab.COURSES.tag
-        ),
-        LiquidGlassTabItem(
-            id = StudentTab.POSTS.id,
-            label = stringResource(StudentTab.POSTS.labelRes),
-            selectedIcon = StudentTab.POSTS.selectedIcon,
-            unselectedIcon = StudentTab.POSTS.unselectedIcon,
-            testTag = StudentTab.POSTS.tag
-        ),
-        LiquidGlassTabItem(
-            id = StudentTab.PROFILE.id,
-            label = stringResource(StudentTab.PROFILE.labelRes),
-            selectedIcon = StudentTab.PROFILE.selectedIcon,
-            unselectedIcon = StudentTab.PROFILE.unselectedIcon,
-            testTag = StudentTab.PROFILE.tag
+    val studyLabel = stringResource(StudentTab.STUDY.labelRes)
+    val coursesLabel = stringResource(StudentTab.COURSES.labelRes)
+    val postsLabel = stringResource(StudentTab.POSTS.labelRes)
+    val profileLabel = stringResource(StudentTab.PROFILE.labelRes)
+    val navGlassItems = remember(studyLabel, coursesLabel, postsLabel, profileLabel) {
+        listOf(
+            LiquidGlassTabItem(
+                id = StudentTab.STUDY.id,
+                label = studyLabel,
+                selectedIcon = StudentTab.STUDY.selectedIcon,
+                unselectedIcon = StudentTab.STUDY.unselectedIcon,
+                testTag = StudentTab.STUDY.tag
+            ),
+            LiquidGlassTabItem(
+                id = StudentTab.COURSES.id,
+                label = coursesLabel,
+                selectedIcon = StudentTab.COURSES.selectedIcon,
+                unselectedIcon = StudentTab.COURSES.unselectedIcon,
+                testTag = StudentTab.COURSES.tag
+            ),
+            LiquidGlassTabItem(
+                id = StudentTab.POSTS.id,
+                label = postsLabel,
+                selectedIcon = StudentTab.POSTS.selectedIcon,
+                unselectedIcon = StudentTab.POSTS.unselectedIcon,
+                testTag = StudentTab.POSTS.tag
+            ),
+            LiquidGlassTabItem(
+                id = StudentTab.PROFILE.id,
+                label = profileLabel,
+                selectedIcon = StudentTab.PROFILE.selectedIcon,
+                unselectedIcon = StudentTab.PROFILE.unselectedIcon,
+                testTag = StudentTab.PROFILE.tag
+            )
         )
-    )
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val useNavRail = maxWidth >= 600.dp
@@ -795,13 +974,19 @@ private fun StudentUnlockedHost(
                     when (currentTab) {
                         StudentTab.STUDY -> DashboardScreen(
                             profileState = profileState,
-                            publishedState = publishedState,
+                            publishedState = effectivePublishedState,
                             attemptsMap = attemptsMap,
                             downloadedPacks = downloadedPacks,
+                            offlineStudyCache = offlineStudyCache,
+                            localStorageKb = localStorageKb,
+                            isOfflineFallbackActive = isOfflineFallbackActive,
                             isDarkTheme = isDarkTheme,
                             isSyncing = isSyncing,
                             onToggleTheme = onToggleTheme,
-                            onSyncNow = viewModel::syncNow,
+                            onSyncNow = {
+                                viewModel.syncNow()
+                                saveOfflineSnapshotNow()
+                            },
                             onStartStudy = { mode, subj, count ->
                                 viewModel.startQuizSession(
                                     mode = mode,
@@ -820,22 +1005,19 @@ private fun StudentUnlockedHost(
                                 )
                             },
                             onSaveOfflinePack = { title, subj, qs ->
-                                viewModel.saveOfflineInteractivePack(context, title, subj, qs, silent = true)
+                                viewModel.saveOfflineInteractivePack(context, title, subj, qs, silent = false)
                             },
+                            onSaveOfflineSnapshot = saveOfflineSnapshotNow,
                             onOpenMoreTab = onSetActiveMoreMenuTab,
+                            onSignOut = onSignOut,
                             onPostMessage = viewModel::postMessage
                         )
 
                         StudentTab.COURSES -> {
-                            val publishedCoursesState by viewModel.publishedCoursesState.collectAsStateWithLifecycle()
-                            val publishedPostsState by viewModel.publishedPostsState.collectAsStateWithLifecycle()
-                            val publishedPosts = remember(publishedPostsState) {
-                                (publishedPostsState as? UiState.Success)?.data.orEmpty()
-                            }
                             StudentCoursesScreen(
                                 activePlan = activePlan,
-                                coursesState = publishedCoursesState,
-                                publishedPosts = publishedPosts,
+                                coursesState = effectiveCoursesState,
+                                publishedPosts = effectivePostsList,
                                 publishedQuestions = corePublishedQuestions,
                                 isDarkTheme = isDarkTheme,
                                 onOpenInteractiveLesson = onOpenInteractiveLesson,
@@ -854,10 +1036,9 @@ private fun StudentUnlockedHost(
                         }
 
                         StudentTab.POSTS -> {
-                            val publishedPostsState by viewModel.publishedPostsState.collectAsStateWithLifecycle()
                             PostsFeedScreen(
                                 activePlan = activePlan,
-                                postsState = publishedPostsState,
+                                postsState = effectivePostsState,
                                 publishedQuestions = corePublishedQuestions,
                                 isDarkTheme = isDarkTheme,
                                 onOpenInteractiveLesson = onOpenInteractiveLesson,
@@ -875,6 +1056,8 @@ private fun StudentUnlockedHost(
                             ProfileScreen(
                                 profileState = profileState,
                                 publishedQuestions = corePublishedQuestions,
+                                offlineStudyCache = offlineStudyCache,
+                                localStorageKb = localStorageKb,
                                 examSessions = examSessions,
                                 activeAccessKey = activeKey,
                                 deviceId = deviceId,
@@ -885,10 +1068,12 @@ private fun StudentUnlockedHost(
                                 isMutating = isMutating,
                                 onSelectThemeMode = onSelectThemeMode,
                                 onOpenMoreTab = onSetActiveMoreMenuTab,
-                                onSaveOfflinePack = { title, subj, qs ->
-                                    viewModel.saveOfflineInteractivePack(context, title, subj, qs, silent = true)
+                                onSaveOfflineSnapshot = saveOfflineSnapshotNow,
+                                onActivateOptionalKey = viewModel::activateStudentKey,
+                                onSyncNow = {
+                                    viewModel.syncNow()
+                                    saveOfflineSnapshotNow()
                                 },
-                                onSyncNow = viewModel::syncNow,
                                 onSavePreferences = { name, exam, goal ->
                                     viewModel.saveProfilePreferences(name, exam, goal)
                                 },

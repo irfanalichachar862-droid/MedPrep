@@ -160,7 +160,7 @@ fun AccessKeyGateScreen(
                 Text(
                     text = when (accessStatus) {
                         is StudentAccessStatus.DeviceMismatch ->
-                            "Your Access Key (${accessStatus.key.keyCode}) is already bound to another device. Each student key works on 1 device only. Ask Admin to reset your device lock or enter a new unused key."
+                            "Your Access Key (${accessStatus.key.keyCode}) is currently active on another device. Enter your matching Access Key below — since your email matches, your old device will automatically log out and this device will log in."
                         is StudentAccessStatus.Revoked ->
                             "Your Access Key (${accessStatus.key.keyCode}) has been revoked by Admin. Contact Admin below or enter a new active key."
                         else -> stringResource(R.string.key_gate_subtitle)
@@ -271,11 +271,20 @@ fun AccessKeyGateScreen(
                                     strokeWidth = 2.dp
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Activating Key…")
+                                Text(
+                                    if (accessStatus is StudentAccessStatus.DeviceMismatch) "Switching Device…"
+                                    else "Activating Key…"
+                                )
                             } else {
                                 Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(R.string.key_gate_activate_button))
+                                Text(
+                                    if (accessStatus is StudentAccessStatus.DeviceMismatch) {
+                                        "Verify Key & Switch to This Device"
+                                    } else {
+                                        stringResource(R.string.key_gate_activate_button)
+                                    }
+                                )
                             }
                         }
                     }
@@ -310,16 +319,16 @@ fun AccessKeyGateScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL,
+                                text = MedPrepConstants.SUPPORT_EMAIL,
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                         IconButton(onClick = {
-                            clipboard.setText(AnnotatedString(MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL))
-                            onPostMessage("Copied admin email")
+                            clipboard.setText(AnnotatedString(MedPrepConstants.SUPPORT_EMAIL))
+                            onPostMessage("Copied support email")
                         }) {
-                            Icon(Icons.Rounded.ContentCopy, contentDescription = "Copy Admin Email")
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = "Copy Support Email")
                         }
                     }
                 }

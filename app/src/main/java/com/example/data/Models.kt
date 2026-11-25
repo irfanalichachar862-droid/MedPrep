@@ -89,10 +89,11 @@ enum class SubscriptionPlanTier(
         level = 0,
         badge = "Starter",
         features = listOf(
+            "Instant Email Login — no Access Key required",
             "Quick Practice across all 5 subjects (up to 10 MCQs/session)",
+            "Offline Mobile Storage: auto-cached MCQs & in-app offline packs",
             "Randomized A–D options, instant Reasons & Mistake Review",
-            "Bookmarks, Posts notes & YouTube video links",
-            "Basic subject progress overview & up to 5 Study Notes",
+            "Bookmarks, Posts notes, YouTube video links & up to 5 Notes",
             "Light & Dark theme modes"
         )
     ),
@@ -106,8 +107,7 @@ enum class SubscriptionPlanTier(
         features = listOf(
             "Everything in Free + Unlimited Practice MCQs per session",
             "Timed Exam simulations with countdown & full retest",
-            "PDF MCQ downloads with Answer Key & Reasons",
-            "Interactive Offline Downloaded MCQ packs",
+            "Unlimited Subject Offline Study Packs in mobile storage",
             "Smart N-day Study Schedule & Difficult Questions Vault",
             "Unlimited Highlights & Study Notes"
         )
@@ -122,7 +122,7 @@ enum class SubscriptionPlanTier(
         features = listOf(
             "Everything in Basic + All Interactive HTML Topic Lessons",
             "Full Courses syllabus, linked lessons & Course MCQ Drills",
-            "Full JSON Backup Export & Restore",
+            "Full Offline Study Cache (MCQs, Courses & Interactive Lessons)",
             "All Premium Color Palettes & Custom Font Styles",
             "Two-way Topic ↔ MCQ deep links & priority Admin support"
         )
@@ -144,13 +144,15 @@ object PlanEntitlements {
     fun maxStudyNotes(plan: SubscriptionPlanTier): Int =
         if (hasBasic(plan)) Int.MAX_VALUE else 5
 
+    fun maxOfflinePackMcqs(plan: SubscriptionPlanTier): Int =
+        if (hasBasic(plan)) 250 else 50
+
     fun canUseTimedExam(plan: SubscriptionPlanTier): Boolean = hasBasic(plan)
-    fun canDownloadPdfAndOfflinePacks(plan: SubscriptionPlanTier): Boolean = hasBasic(plan)
+    fun canSaveOfflineStudyPacks(plan: SubscriptionPlanTier): Boolean = true
     fun canUseStudySchedule(plan: SubscriptionPlanTier): Boolean = hasBasic(plan)
     fun canUseDifficultVault(plan: SubscriptionPlanTier): Boolean = hasBasic(plan)
     fun canOpenInteractiveHtml(plan: SubscriptionPlanTier): Boolean = hasAdvance(plan)
     fun canAccessFullCourses(plan: SubscriptionPlanTier): Boolean = hasAdvance(plan)
-    fun canExportImportBackup(plan: SubscriptionPlanTier): Boolean = hasAdvance(plan)
     fun canUsePremiumAppearance(plan: SubscriptionPlanTier): Boolean = hasAdvance(plan)
 }
 
@@ -350,6 +352,11 @@ sealed interface StudentAccessStatus {
     data class Revoked(val key: AccessKey) : StudentAccessStatus
 }
 
+data class KeyActivationOutcome(
+    val key: AccessKey,
+    val transferredFromOldDevice: Boolean
+)
+
 sealed interface UiState<out T> {
     data object Loading : UiState<Nothing>
     data class Success<T>(val data: T) : UiState<T>
@@ -433,7 +440,9 @@ data class SubjectStats(
 }
 
 object MedPrepConstants {
+    // Internal bootstrap admin check only — never display personal email in UI
     const val BOOTSTRAP_ADMIN_EMAIL = "irfanalichachar862@gmail.com"
+    const val SUPPORT_EMAIL = "developeremailofsystem@gmail.com"
     const val JAZZCASH_IBAN = "PK16JCMA2801923160395755"
     const val PAYMENT_METHOD_NAME = "JazzCash"
 

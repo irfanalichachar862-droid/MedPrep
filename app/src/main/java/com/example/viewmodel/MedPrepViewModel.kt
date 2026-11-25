@@ -12,6 +12,7 @@ import com.example.data.DifficultQuestionDraft
 import com.example.data.DifficultQuestionItem
 import com.example.data.DownloadedMcqPack
 import com.example.data.ExamSession
+import com.example.data.LocalStudyCache
 import com.example.data.McqQuestion
 import com.example.data.MedPrepBackupPayload
 import com.example.data.MedPrepConstants
@@ -256,6 +257,14 @@ class MedPrepViewModel(
     private val _downloadedPacks = MutableStateFlow<List<DownloadedMcqPack>>(emptyList())
     val downloadedPacks: StateFlow<List<DownloadedMcqPack>> = _downloadedPacks.asStateFlow()
 
+    private val _offlineStudyCache = MutableStateFlow<LocalStudyCache?>(null)
+    val offlineStudyCache: StateFlow<LocalStudyCache?> = _offlineStudyCache.asStateFlow()
+
+    private val _localStorageKb = MutableStateFlow(0L)
+    val localStorageKb: StateFlow<Long> = _localStorageKb.asStateFlow()
+
+    private var lastCachedSignature: String = ""
+
     private val _activeQuiz = MutableStateFlow<ActiveQuizState?>(null)
     val activeQuiz: StateFlow<ActiveQuizState?> = _activeQuiz.asStateFlow()
 
@@ -305,8 +314,12 @@ class MedPrepViewModel(
             _isMutating.value = true
             _keyActivationError.value = null
             repository.activateAccessKey(rawKeyCode, deviceId)
-                .onSuccess { key ->
-                    _snackbarMessage.value = "Access Key ${key.keyCode} activated and locked to this device!"
+                .onSuccess { outcome ->
+                    _snackbarMessage.value = if (outcome.transferredFromOldDevice) {
+                        "Email & Access Key matched! Logged out from your old device and unlocked here."
+                    } else {
+                        "Access Key ${outcome.key.keyCode} activated and locked to this device!"
+                    }
                 }
                 .onFailure { err ->
                     val msg = err.localizedMessage ?: "Could not activate Access Key."
@@ -385,9 +398,64 @@ class MedPrepViewModel(
     // --- PROFILE PREFERENCES, PLANS, SCHEDULE, NOTES, DIFFICULT QUESTIONS & OFFLINE PACKS ---
 
     fun loadOfflinePacks(context: Context) {
+        val appContext = context.applicationContext
         viewModelScope.launch(Dispatchers.IO) {
-            val loaded = OfflinePackStorage.loadDownloadedPacks(context.applicationContext, currentUserId)
+            val loaded = OfflinePackStorage.loadDownloadedPacks(appContext, currentUserId)
+            val cache = OfflinePackStorage.loadStudyCache(appContext, currentUserId)
+            val sizeKb = OfflinePackStorage.getLocalStorageSizeKb(appContext, currentUserId)
             _downloadedPacks.value = loaded
+            _offlineStudyCache.value = cache
+            _localStorageKb.value = sizeKb
+        }
+    }
+
+    fun autoCacheStudyData(
+        context: Context,
+        questions: List<McqQuestion>,
+        courses: List<CourseItem>,
+        posts: List<StudyPost>,
+        force: Boolean = false,
+        showToast: Boolean = false
+    ) {
+        if (questions.isEmpty() && courses.isEmpty() && posts.isEmpty()) {
+            if (showToast) {
+                _snackbarMessage.value = "Connect once to load MCQs & lessons, then they will stay saved on your phone."
+            }
+            return
+        }
+        val signature = "${questions.size}_${questions.firstOrNull()?.id}_${questions.lastOrNull()?.id}_" +
+            "${courses.size}_${courses.firstOrNull()?.id}_${posts.size}_${posts.firstOrNull()?.id}"
+        if (!force && signature == lastCachedSignature) return
+        val appContext = context.applicationContext
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val saved = OfflinePackStorage.saveStudyCache(
+                    context = appContext,
+                    uid = currentUserId,
+                    questions = questions,
+                    courses = courses,
+                    posts = posts
+                )
+                lastCachedSignature = signature
+                _offlineStudyCache.value = saved
+                _localStorageKb.value = OfflinePackStorage.getLocalStorageSizeKb(appContext, currentUserId)
+                if (showToast) {
+                    _snackbarMessage.value = "Saved ${saved.questions.size} MCQs, ${saved.courses.size} Courses & ${saved.posts.size} Lessons in mobile storage for offline study!"
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to write offline study cache", e)
+            }
+        }
+    }
+
+    fun clearOfflineStudyCache(context: Context) {
+        val appContext = context.applicationContext
+        viewModelScope.launch(Dispatchers.IO) {
+            OfflinePackStorage.clearStudyCache(appContext, currentUserId)
+            lastCachedSignature = ""
+            _offlineStudyCache.value = null
+            _localStorageKb.value = OfflinePackStorage.getLocalStorageSizeKb(appContext, currentUserId)
+            _snackbarMessage.value = "Cleared local offline study cache."
         }
     }
 
@@ -399,29 +467,33 @@ class MedPrepViewModel(
         silent: Boolean = false
     ) {
         if (questions.isEmpty()) {
-            if (!silent) _snackbarMessage.value = "No MCQs available to save offline."
+            if (!silent) _snackbarMessage.value = "No MCQs available to save in mobile storage."
             return
         }
+        val appContext = context.applicationContext
         viewModelScope.launch(Dispatchers.IO) {
             val updated = OfflinePackStorage.saveDownloadedPack(
-                context = context.applicationContext,
+                context = appContext,
                 uid = currentUserId,
                 title = title,
                 subject = subject,
                 questions = questions
             )
             _downloadedPacks.value = updated
+            _localStorageKb.value = OfflinePackStorage.getLocalStorageSizeKb(appContext, currentUserId)
             if (!silent) {
-                _snackbarMessage.value = "Saved '$title' (${questions.size} MCQs) for interactive offline practice!"
+                _snackbarMessage.value = "Saved '$title' (${questions.size} MCQs) in mobile storage for offline study!"
             }
         }
     }
 
     fun deleteOfflineInteractivePack(context: Context, packId: String) {
+        val appContext = context.applicationContext
         viewModelScope.launch(Dispatchers.IO) {
-            val updated = OfflinePackStorage.deleteDownloadedPack(context.applicationContext, currentUserId, packId)
+            val updated = OfflinePackStorage.deleteDownloadedPack(appContext, currentUserId, packId)
             _downloadedPacks.value = updated
-            _snackbarMessage.value = "Removed offline MCQ pack."
+            _localStorageKb.value = OfflinePackStorage.getLocalStorageSizeKb(appContext, currentUserId)
+            _snackbarMessage.value = "Removed offline study pack."
         }
     }
 
@@ -901,8 +973,11 @@ class MedPrepViewModel(
     ) {
         activeShuffleEnabled = shuffleOptions
         activeExamSecondsPerQuestion = examSecondsPerQuestion.coerceIn(30, 180)
-        val allPublished = (publishedQuestionsState.value as? UiState.Success)?.data
+        val onlinePublished = (publishedQuestionsState.value as? UiState.Success)?.data
             ?.filter { MedPrepConstants.isCoreSubject(it.subject) }.orEmpty()
+        val allPublished = onlinePublished.ifEmpty {
+            _offlineStudyCache.value?.questions?.filter { MedPrepConstants.isCoreSubject(it.subject) }.orEmpty()
+        }
         val attempts = attemptsMapState.value
 
         val filtered = when (mode) {
@@ -973,8 +1048,11 @@ class MedPrepViewModel(
     }
 
     fun startLinkedMcqsForPost(post: StudyPost, maxQuestions: Int = 50) {
-        val allPublished = (publishedQuestionsState.value as? UiState.Success)?.data
+        val onlinePublished = (publishedQuestionsState.value as? UiState.Success)?.data
             ?.filter { MedPrepConstants.isCoreSubject(it.subject) }.orEmpty()
+        val allPublished = onlinePublished.ifEmpty {
+            _offlineStudyCache.value?.questions?.filter { MedPrepConstants.isCoreSubject(it.subject) }.orEmpty()
+        }
         val linked = com.example.data.TopicLinkResolver.findLinkedQuestions(post, allPublished)
         if (linked.isEmpty()) {
             _snackbarMessage.value = "No published MCQs are linked to '${post.topic.ifBlank { post.title }}' yet."

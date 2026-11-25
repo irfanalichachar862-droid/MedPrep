@@ -25,8 +25,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
@@ -131,6 +133,7 @@ fun ProfileTabContent(
     isAdminUser: Boolean,
     isMutating: Boolean,
     onSaveFullProfile: (String, String, Long, String?, String?, Long?) -> Unit,
+    onActivateOptionalKey: (String) -> Unit,
     onJumpToPlans: () -> Unit,
     onPostMessage: (String) -> Unit
 ) {
@@ -144,6 +147,7 @@ fun ProfileTabContent(
     var targetExam by remember { mutableStateOf(profile?.targetExam ?: MedPrepConstants.EXAM_TRACKS.first()) }
     var dailyGoal by remember { mutableLongStateOf(profile?.dailyGoal ?: 25L) }
     var avatarBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var optionalKeyCode by remember { mutableStateOf("") }
 
     LaunchedEffect(currentUserId) {
         avatarBitmap = withContext(Dispatchers.IO) {
@@ -204,8 +208,9 @@ fun ProfileTabContent(
                     Box(contentAlignment = Alignment.BottomEnd) {
                         val bmp = avatarBitmap
                         if (bmp != null) {
+                            val avatarImage = remember(bmp) { bmp.asImageBitmap() }
                             Image(
-                                bitmap = bmp.asImageBitmap(),
+                                bitmap = avatarImage,
                                 contentDescription = "Profile photo",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
@@ -329,32 +334,91 @@ fun ProfileTabContent(
             }
         }
 
-        // Student Access Key Card
-        if (!isAdminUser && activeAccessKey != null) {
+        // Student Access Key Card (Active Key badge OR Optional Activation)
+        if (!isAdminUser) {
             item {
-                Card(
-                    shape = MaterialTheme.shapes.large,
-                    colors = CardDefaults.cardColors(containerColor = ext.successContainer.copy(alpha = 0.55f)),
-                    border = BorderStroke(1.dp, ext.success.copy(alpha = 0.35f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                if (activeAccessKey != null) {
+                    Card(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(containerColor = ext.successContainer.copy(alpha = 0.55f)),
+                        border = BorderStroke(1.dp, ext.success.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Rounded.Key, contentDescription = null, tint = ext.onSuccessContainer)
-                        Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(Icons.Rounded.Key, contentDescription = null, tint = ext.onSuccessContainer)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "1-Device Key: ${activeAccessKey.keyCode}",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = MonoFontFamily),
+                                    color = ext.onSuccessContainer
+                                )
+                                Text(
+                                    text = "Device Lock: ${DeviceIdProvider.shortLabel(deviceId)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = ext.onSuccessContainer.copy(alpha = 0.85f)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Card(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Rounded.Key, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Text("Optional Access Key", style = MaterialTheme.typography.titleSmall)
+                            }
                             Text(
-                                text = "1-Device Key: ${activeAccessKey.keyCode}",
-                                style = MaterialTheme.typography.titleSmall.copy(fontFamily = MonoFontFamily),
-                                color = ext.onSuccessContainer
+                                text = "Free features work without a key. If Admin issued you an Access Key, apply it below anytime.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Text(
-                                text = "Device Lock: ${DeviceIdProvider.shortLabel(deviceId)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = ext.onSuccessContainer.copy(alpha = 0.85f)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = optionalKeyCode,
+                                    onValueChange = {
+                                        optionalKeyCode = it.uppercase()
+                                            .filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                                            .take(40)
+                                    },
+                                    label = { Text("Enter Access Key") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f).testTag("hub_optional_key_input")
+                                )
+                                Button(
+                                    onClick = {
+                                        val clean = optionalKeyCode.trim().uppercase()
+                                        if (clean.length < 6) {
+                                            onPostMessage("Enter at least 6 characters for an Access Key.")
+                                        } else {
+                                            onActivateOptionalKey(clean)
+                                            optionalKeyCode = ""
+                                        }
+                                    },
+                                    enabled = !isMutating && optionalKeyCode.trim().length >= 6,
+                                    modifier = Modifier.height(54.dp).testTag("hub_apply_optional_key_button")
+                                ) {
+                                    Text("Apply")
+                                }
+                            }
                         }
                     }
                 }
@@ -784,18 +848,18 @@ fun PlansTabContent(
                             style = MaterialTheme.typography.titleSmall
                         )
                         Text(
-                            text = "Admin: ${MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL}",
+                            text = "Support: ${MedPrepConstants.SUPPORT_EMAIL}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     IconButton(
                         onClick = {
-                            clipboard.setText(AnnotatedString(MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL))
-                            onPostMessage("Copied Admin email!")
+                            clipboard.setText(AnnotatedString(MedPrepConstants.SUPPORT_EMAIL))
+                            onPostMessage("Copied support email!")
                         }
                     ) {
-                        Icon(Icons.Rounded.ContentCopy, contentDescription = "Copy admin email")
+                        Icon(Icons.Rounded.ContentCopy, contentDescription = "Copy support email")
                     }
                 }
             }
@@ -853,7 +917,10 @@ private fun JazzCashCheckoutDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 JazzCashPaymentAccountBanner(onCopied = onCopyIban)
 
                 Text(

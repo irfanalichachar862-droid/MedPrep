@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import android.Manifest
-import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,20 +37,17 @@ import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.CalendarMonth
-import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.OfflinePin
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PriorityHigh
-import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.Visibility
@@ -59,12 +55,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -75,6 +71,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -91,28 +88,26 @@ import com.example.R
 import com.example.data.DifficultQuestionDraft
 import com.example.data.DifficultQuestionItem
 import com.example.data.DownloadedMcqPack
+import com.example.data.LocalStudyCache
 import com.example.data.McqQuestion
-import com.example.notifications.MedPrepNotificationHelper
-import com.example.data.MedPrepBackupPayload
 import com.example.data.MedPrepConstants
-import com.example.data.OfflinePackStorage
-import com.example.data.PdfMcqExporter
 import com.example.data.PlanEntitlements
 import com.example.data.StudyNote
 import com.example.data.StudyNoteDraft
 import com.example.data.SubscriptionPlanTier
-import com.example.data.UserProfile
+import com.example.notifications.MedPrepNotificationHelper
 import com.example.ui.components.ChemistryFormulaToolbar
 import com.example.ui.components.FormulaText
 import com.example.ui.components.LiquidGlassSurface
 import com.example.ui.components.PlanLockCard
-import com.example.ui.theme.AppAppearanceConfig
 import com.example.ui.theme.AppFunctionalSettings
 import com.example.ui.theme.LocalMedPrepColors
 import com.example.ui.theme.MonoFontFamily
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 // --- TAB 5: HIGHLIGHTS & NOTES + DOWNLOADED INTERACTIVE MCQS & PDF EXPORT ---
 
@@ -132,11 +127,9 @@ fun HighlightsNotesTabContent(
     onUpgradePlan: () -> Unit,
     onPostMessage: (String) -> Unit
 ) {
-    val context = LocalContext.current
-    val canDownloadPdfAndPacks = PlanEntitlements.canDownloadPdfAndOfflinePacks(activePlan)
     val maxNotesAllowed = PlanEntitlements.maxStudyNotes(activePlan)
+    val maxOfflinePackMcqs = PlanEntitlements.maxOfflinePackMcqs(activePlan)
     var selectedSubject by remember { mutableStateOf("All Subjects") }
-    var pendingPdfQuestions by remember { mutableStateOf<Pair<String, List<McqQuestion>>?>(null) }
     var readingPack by remember { mutableStateOf<DownloadedMcqPack?>(null) }
     var showAddNoteDialog by remember { mutableStateOf(false) }
 
@@ -145,116 +138,62 @@ fun HighlightsNotesTabContent(
         else publishedQuestions.filter { it.subject.equals(selectedSubject, ignoreCase = true) }
     }
 
-    val pdfExportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/pdf")
-    ) { uri: Uri? ->
-        val payload = pendingPdfQuestions
-        if (uri != null && payload != null) {
-            try {
-                val (packTitle, list) = payload
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    PdfMcqExporter.writeMcqsPdf(
-                        outputStream = out,
-                        title = "MedPrep — $packTitle",
-                        subtitle = "5-Subject Interactive MCQ Bank",
-                        questions = list
-                    )
-                }
-                // Also save as interactive offline pack inside the app!
-                onSaveOfflinePack(packTitle, selectedSubject, list)
-                onPostMessage("Saved PDF + Interactive Offline Pack (${list.size} MCQs)!")
-            } catch (e: Exception) {
-                onPostMessage("PDF export failed: ${e.localizedMessage ?: "Error"}")
-            }
-        }
-        pendingPdfQuestions = null
-    }
-
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. Download MCQs as PDF & Interactive In-App Offline Packs (Basic+ Plan)
+        // 1. In-App Offline Mobile Storage Packs (No external file downloads — available to all students including Free)
         item {
-            if (!canDownloadPdfAndPacks) {
-                PlanLockCard(
-                    requiredTier = SubscriptionPlanTier.BASIC,
-                    featureTitle = "PDF MCQ Downloads & Offline Packs",
-                    description = "Export formatted multi-page PDF study sheets with Answer Keys & Reasons, and save Interactive Offline MCQ Packs to practice without internet.",
-                    onUpgradeClick = onUpgradePlan,
-                    testTag = "notes_upgrade_pdf_basic_button"
-                )
-            } else {
-                LiquidGlassSurface(shape = MaterialTheme.shapes.extraLarge) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+            LiquidGlassSurface(shape = MaterialTheme.shapes.extraLarge) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Column {
-                                Text("Download MCQs (PDF + Interactive App Mode)", style = MaterialTheme.typography.titleMedium)
-                                Text(
-                                    "Export clean multi-page PDF & run downloaded MCQs interactively inside the app",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                        Icon(Icons.Rounded.OfflinePin, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Column {
+                            Text("Offline Mobile Storage Packs (In-App)", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = "Save MCQs privately inside your phone storage so you can run Interactive Quizzes & Read Answers without internet.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
+                    }
 
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            (listOf("All Subjects") + MedPrepConstants.DEFAULT_SUBJECTS).forEach { subj ->
-                                FilterChip(
-                                    selected = selectedSubject == subj,
-                                    onClick = { selectedSubject = subj },
-                                    label = { Text(subj) }
-                                )
-                            }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        (listOf("All Subjects") + MedPrepConstants.DEFAULT_SUBJECTS).forEach { subj ->
+                            FilterChip(
+                                selected = selectedSubject == subj,
+                                onClick = { selectedSubject = subj },
+                                label = { Text(subj) }
+                            )
                         }
+                    }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    val title = "$selectedSubject MCQs"
-                                    pendingPdfQuestions = title to filteredQuestions
-                                    val safeName = selectedSubject.replace(" ", "_")
-                                    pdfExportLauncher.launch("MedPrep_${safeName}_MCQs.pdf")
-                                },
-                                enabled = filteredQuestions.isNotEmpty(),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("notes_download_pdf_button")
-                            ) {
-                                Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("PDF (${filteredQuestions.size})")
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    onSaveOfflinePack("$selectedSubject Interactive Pack", selectedSubject, filteredQuestions)
-                                },
-                                enabled = filteredQuestions.isNotEmpty(),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("notes_save_offline_pack_button")
-                            ) {
-                                Icon(Icons.Rounded.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Save In-App")
-                            }
-                        }
+                    val cappedList = remember(filteredQuestions, maxOfflinePackMcqs) {
+                        filteredQuestions.take(maxOfflinePackMcqs)
+                    }
+                    Button(
+                        onClick = {
+                            onSaveOfflinePack("$selectedSubject Offline Pack", selectedSubject, cappedList)
+                        },
+                        enabled = cappedList.isNotEmpty(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("notes_save_offline_pack_button")
+                    ) {
+                        Icon(Icons.Rounded.SaveAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save ${cappedList.size} MCQs to Mobile Storage (Offline)")
                     }
                 }
             }
@@ -263,7 +202,7 @@ fun HighlightsNotesTabContent(
         // 2. Saved Offline Interactive Packs (Run Interactively Inside the App!)
         item {
             Text(
-                text = "Downloaded Interactive Packs (${downloadedPacks.size})",
+                text = "Saved Offline Study Packs (${downloadedPacks.size})",
                 style = MaterialTheme.typography.titleMedium
             )
         }
@@ -276,7 +215,7 @@ fun HighlightsNotesTabContent(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "No downloaded packs yet. Tap PDF or Save In-App above to download MCQs and run them interactively offline anytime.",
+                        text = "No saved offline packs yet. Tap 'Save to Mobile Storage' above to keep MCQs on your phone for offline study inside MedPrep.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(14.dp)
@@ -694,7 +633,6 @@ fun DifficultQuestionsTabContent(
     onUpgradePlan: () -> Unit,
     onPostMessage: (String) -> Unit
 ) {
-    val context = LocalContext.current
     if (!PlanEntitlements.canUseDifficultVault(activePlan)) {
         Box(
             modifier = Modifier
@@ -705,7 +643,7 @@ fun DifficultQuestionsTabContent(
             PlanLockCard(
                 requiredTier = SubscriptionPlanTier.BASIC,
                 featureTitle = "Difficult Exam Questions Vault",
-                description = "Save custom difficult exam MCQs, flag tough questions during practice, drill high-difficulty sets, and export your Difficult Vault to PDF.",
+                description = "Save custom difficult exam MCQs, flag tough questions during practice, and drill high-difficulty revision sets.",
                 onUpgradeClick = onUpgradePlan,
                 testTag = "difficult_upgrade_basic_button"
             )
@@ -721,26 +659,6 @@ fun DifficultQuestionsTabContent(
         val personalAsMcq = personalDifficult.map { it.toMcqQuestion() }
         val existingIds = personalAsMcq.map { it.id }.toSet()
         personalAsMcq + bankHardQuestions.filterNot { it.id in existingIds }
-    }
-
-    val pdfDifficultLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/pdf")
-    ) { uri: Uri? ->
-        if (uri != null && combinedDifficult.isNotEmpty()) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    PdfMcqExporter.writeMcqsPdf(
-                        outputStream = out,
-                        title = "MedPrep — Difficult Exam Questions",
-                        subtitle = "High-Difficulty Revision Vault",
-                        questions = combinedDifficult
-                    )
-                }
-                onPostMessage("Exported ${combinedDifficult.size} Difficult Questions to PDF!")
-            } catch (e: Exception) {
-                onPostMessage("PDF export failed: ${e.localizedMessage ?: "Error"}")
-            }
-        }
     }
 
     LazyColumn(
@@ -796,16 +714,6 @@ fun DifficultQuestionsTabContent(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Add Difficult Q")
                         }
-                    }
-
-                    OutlinedButton(
-                        onClick = { pdfDifficultLauncher.launch("MedPrep_Difficult_Questions.pdf") },
-                        enabled = combinedDifficult.isNotEmpty(),
-                        modifier = Modifier.fillMaxWidth().height(44.dp)
-                    ) {
-                        Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Download Difficult Questions PDF")
                     }
                 }
             }
@@ -979,30 +887,28 @@ private fun AddDifficultQuestionDialog(
     )
 }
 
-// --- TAB 7: SETTINGS & BACKUP (ALL APP SETTINGS + EXPORT/IMPORT BACKUP + BOTTOM ADMIN LOGIN) ---
+// --- TAB 7: SETTINGS & OFFLINE MOBILE STORAGE (+ BOTTOM ADMIN LOGIN) ---
 
 @Composable
 fun SettingsBackupTabContent(
-    activePlan: SubscriptionPlanTier,
-    profile: UserProfile?,
-    appearance: AppAppearanceConfig,
     settings: AppFunctionalSettings,
     studyNotes: List<StudyNote>,
     difficultQuestions: List<DifficultQuestionItem>,
     downloadedPacks: List<DownloadedMcqPack>,
+    offlineStudyCache: LocalStudyCache?,
+    localStorageKb: Long,
     isAdminUser: Boolean,
     isSyncing: Boolean,
-    isMutating: Boolean,
     onUpdateSettings: (AppFunctionalSettings) -> Unit,
     onSyncNow: () -> Unit,
-    onImportBackup: (MedPrepBackupPayload) -> Unit,
-    onUpgradeToAdvance: () -> Unit,
+    onSaveOfflineSnapshotNow: () -> Unit,
+    onClearOfflineCache: () -> Unit,
     onOpenAdminPanel: (() -> Unit)?,
     onSignOut: () -> Unit,
     onPostMessage: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val canUseBackup = PlanEntitlements.canExportImportBackup(activePlan)
+    val scope = rememberCoroutineScope()
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -1010,52 +916,13 @@ fun SettingsBackupTabContent(
         if (granted) {
             val updated = settings.copy(notificationsEnabled = true)
             onUpdateSettings(updated)
-            MedPrepNotificationHelper.syncSchedule(context, updated)
+            val appContext = context.applicationContext
+            scope.launch(Dispatchers.IO) {
+                MedPrepNotificationHelper.syncSchedule(appContext, updated)
+            }
             onPostMessage("Study notifications enabled!")
         } else {
             onPostMessage("Notification permission denied. You can enable it anytime in Android Settings.")
-        }
-    }
-
-    val exportBackupLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                val json = OfflinePackStorage.serializeBackup(
-                    profile = profile,
-                    appearance = appearance,
-                    settings = settings,
-                    notes = studyNotes,
-                    difficultQuestions = difficultQuestions,
-                    offlinePacks = downloadedPacks
-                )
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(json.toByteArray(Charsets.UTF_8))
-                }
-                onPostMessage("Full MedPrep Backup exported successfully!")
-            } catch (e: Exception) {
-                onPostMessage("Export failed: ${e.localizedMessage ?: "Error"}")
-            }
-        }
-    }
-
-    val importBackupLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                if (raw.isNullOrBlank()) {
-                    onPostMessage("Selected backup file is empty.")
-                } else {
-                    OfflinePackStorage.parseBackup(raw)
-                        .onSuccess { payload -> onImportBackup(payload) }
-                        .onFailure { err -> onPostMessage(err.localizedMessage ?: "Invalid backup file.") }
-                }
-            } catch (e: Exception) {
-                onPostMessage("Import failed: ${e.localizedMessage ?: "Error"}")
-            }
         }
     }
 
@@ -1283,57 +1150,55 @@ fun SettingsBackupTabContent(
             }
         }
 
-        // 2. Import & Export Backup (Advance Plan)
+        // 2. Private Offline Mobile Storage Manager (No external file downloads — keeps study data on device)
         item {
-            if (!canUseBackup) {
-                PlanLockCard(
-                    requiredTier = SubscriptionPlanTier.ADVANCE,
-                    featureTitle = "Full JSON Backup & Restore",
-                    description = "Export and restore your study profile, appearance, notes, difficult questions, and offline MCQ packs as a portable .json backup file.",
-                    onUpgradeClick = onUpgradeToAdvance,
-                    testTag = "settings_upgrade_backup_advance_button"
-                )
-            } else {
-                LiquidGlassSurface(shape = MaterialTheme.shapes.extraLarge) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+            val cachedMcqs = offlineStudyCache?.questions?.size ?: 0
+            val cachedCourses = offlineStudyCache?.courses?.size ?: 0
+            val cachedPosts = offlineStudyCache?.posts?.size ?: 0
+            LiquidGlassSurface(shape = MaterialTheme.shapes.extraLarge) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Backup & Restore", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = "Export or import your profile, appearance theme, settings, ${studyNotes.size} notes, ${difficultQuestions.size} difficult questions, and ${downloadedPacks.size} offline packs as a portable .json file.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Icon(Icons.Rounded.OfflinePin, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text("Offline Mobile Storage (In-App)", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Text(
+                        text = "Saved privately on your phone: $cachedMcqs MCQs, $cachedCourses Courses, $cachedPosts Lessons, ${downloadedPacks.size} Study Packs (${localStorageKb} KB used). Your ${studyNotes.size} notes & ${difficultQuestions.size} difficult Qs sync automatically with your account.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = onSaveOfflineSnapshotNow,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("settings_refresh_offline_cache_button")
                         ) {
-                            Button(
-                                onClick = { exportBackupLauncher.launch("MedPrep_Backup.json") },
-                                enabled = !isMutating,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("settings_export_backup_button")
-                            ) {
-                                Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(17.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Export Backup")
-                            }
-                            OutlinedButton(
-                                onClick = { importBackupLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
-                                enabled = !isMutating,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("settings_import_backup_button")
-                            ) {
-                                Icon(Icons.Rounded.FileUpload, contentDescription = null, modifier = Modifier.size(17.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Import Backup")
-                            }
+                            Icon(Icons.Rounded.SaveAlt, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Save Offline")
+                        }
+                        OutlinedButton(
+                            onClick = onClearOfflineCache,
+                            enabled = localStorageKb > 0L,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("settings_clear_offline_cache_button")
+                        ) {
+                            Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Clear Cache")
                         }
                     }
                 }
@@ -1396,7 +1261,7 @@ fun SettingsBackupTabContent(
                     } else {
                         OutlinedButton(
                             onClick = {
-                                onPostMessage("Sign in with the verified Admin Google account (${MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL}).")
+                                onPostMessage("Sign in with your authorized Admin Google account.")
                                 onSignOut()
                             },
                             modifier = Modifier
@@ -1475,8 +1340,8 @@ fun AppGuideTabContent() {
         listOf(
             GuideStep(
                 "01",
-                "Student-Only 1-Device Access Key",
-                "Sign in with Google and enter your unique Access Key provided by Admin. Your key locks securely to 1 device so your study progress stays protected.",
+                "Instant Email Login & Optional Access Key",
+                "Sign in directly with your verified Google email to start Free immediately — no Access Key required. If Admin gives you an optional Access Key, apply it anytime (and matching email + key auto-transfers from older devices).",
                 Icons.Rounded.Key
             ),
             GuideStep(
@@ -1499,9 +1364,9 @@ fun AppGuideTabContent() {
             ),
             GuideStep(
                 "05",
-                "Download MCQs as PDF + Interactive Offline Mode",
-                "Download any subject or the full bank as a formatted multi-page PDF with exact Chemistry formulas. Each download also saves an Interactive Pack so you can run quizzes or read MCQs offline right inside MedPrep.",
-                Icons.Rounded.PictureAsPdf
+                "Study Offline Using Mobile Storage",
+                "MedPrep automatically saves MCQs, Courses, and Study Lessons privately inside your phone's storage. Save custom subject packs in Highlights & Notes to run interactive quizzes offline anytime.",
+                Icons.Rounded.OfflinePin
             ),
             GuideStep(
                 "06",
@@ -1517,8 +1382,8 @@ fun AppGuideTabContent() {
             ),
             GuideStep(
                 "08",
-                "Liquid Glass Themes, Plans & Full Backup",
-                "Customize Dark/Light mode, 5 color palettes, font style, and text size under Appearance. Use Settings & Backup to export or import a full .json backup anytime.",
+                "Liquid Glass Themes, Plans & Notifications",
+                "Customize Dark/Light mode, 5 color palettes, font style, and text size under Appearance. Manage offline storage and daily study reminders in Settings & Storage.",
                 Icons.Rounded.AutoAwesome
             )
         )
@@ -1601,6 +1466,31 @@ fun AppGuideTabContent() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+        }
+
+        item {
+            Card(
+                shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Need Help? Contact Support",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = MedPrepConstants.SUPPORT_EMAIL,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }

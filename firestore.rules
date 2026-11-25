@@ -553,16 +553,31 @@ service cloud.firestore {
                          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
                            'label', 'status', 'assignedUserId', 'assignedEmail', 'boundDeviceId', 'activatedAt', 'updatedAt'
                          ])) ||
-                         // Tier 2: Student claims an UNCLAIMED active key and locks it to their UID + 1 Device ID
-                         (existing().status == 'active' &&
-                          existing().assignedUserId == '' &&
-                          existing().boundDeviceId == '' &&
-                          incoming().assignedUserId == request.auth.uid &&
-                          incoming().boundDeviceId.size() >= 16 &&
-                          incoming().diff(existing()).affectedKeys().hasOnly([
-                            'assignedUserId', 'assignedEmail', 'boundDeviceId', 'activatedAt', 'updatedAt'
-                          ]))
-                       );
+                          // Tier 2: Student claims an UNCLAIMED active key and locks it to their UID + 1 Device ID
+                          (existing().status == 'active' &&
+                           existing().assignedUserId == '' &&
+                           existing().boundDeviceId == '' &&
+                           incoming().assignedUserId == request.auth.uid &&
+                           incoming().boundDeviceId.size() >= 16 &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'assignedUserId', 'assignedEmail', 'boundDeviceId', 'activatedAt', 'updatedAt'
+                           ])) ||
+                          // Tier 3: Automatic device transfer when verified email + key match the active key owner
+                          (existing().status == 'active' &&
+                           existing().assignedUserId == request.auth.uid &&
+                           existing().assignedEmail != '' &&
+                           ('email' in request.auth.token) &&
+                           ('email_verified' in request.auth.token) &&
+                           request.auth.token.email_verified == true &&
+                           request.auth.token.email.lower() == existing().assignedEmail.lower() &&
+                           incoming().assignedUserId == existing().assignedUserId &&
+                           incoming().assignedEmail == existing().assignedEmail &&
+                           incoming().status == existing().status &&
+                           incoming().boundDeviceId.size() >= 16 &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'boundDeviceId', 'activatedAt', 'updatedAt'
+                           ]))
+                        );
 
       allow delete: if isSignedIn() && isValidId(keyCode) && isAdmin();
     }

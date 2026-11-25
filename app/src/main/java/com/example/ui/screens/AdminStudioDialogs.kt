@@ -51,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +72,9 @@ import com.example.ui.components.ChemistryFormulaToolbar
 import com.example.ui.components.isStructuralChemicalText
 import com.example.ui.theme.MonoFontFamily
 import com.example.ui.theme.subjectVisualFor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -531,32 +535,43 @@ fun PostEditorBottomSheet(
     var publishImmediately by remember { mutableStateOf((initialPost?.status ?: "published") == "published") }
     var validationError by remember { mutableStateOf<String?>(null) }
 
+    val scope = rememberCoroutineScope()
+
     val pickHtmlLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                val rawBytes = context.contentResolver.openInputStream(uri)?.use { stream ->
-                    stream.readBytes()
+            val appContext = context.applicationContext
+            scope.launch(Dispatchers.IO) {
+                val result = runCatching {
+                    val rawBytes = appContext.contentResolver.openInputStream(uri)?.use { stream ->
+                        stream.readBytes()
+                    }
+                    val resolvedName = resolveDialogFileName(appContext, uri) ?: "interactive_lesson.html"
+                    rawBytes to resolvedName
                 }
-                if (rawBytes == null || rawBytes.isEmpty()) {
-                    validationError = "Selected HTML file is empty."
-                } else {
-                    val decoded = rawBytes.toString(Charsets.UTF_8)
-                    if (decoded.length > MedPrepConstants.MAX_HTML_CONTENT_CHARS) {
-                        validationError = "HTML file is too large (${decoded.length / 1024} KB). Max size is 200 KB."
-                    } else {
-                        htmlContent = decoded
-                        htmlFileName = resolveDialogFileName(context, uri) ?: "interactive_lesson.html"
-                        if (title.isBlank()) {
-                            title = htmlFileName.substringBeforeLast('.').replace('_', ' ').replace('-', ' ')
-                                .replaceFirstChar { it.uppercase() }
+                withContext(Dispatchers.Main) {
+                    result.onSuccess { (rawBytes, resolvedName) ->
+                        if (rawBytes == null || rawBytes.isEmpty()) {
+                            validationError = "Selected HTML file is empty."
+                        } else {
+                            val decoded = rawBytes.toString(Charsets.UTF_8)
+                            if (decoded.length > MedPrepConstants.MAX_HTML_CONTENT_CHARS) {
+                                validationError = "HTML file is too large (${decoded.length / 1024} KB). Max size is 200 KB."
+                            } else {
+                                htmlContent = decoded
+                                htmlFileName = resolvedName
+                                if (title.isBlank()) {
+                                    title = htmlFileName.substringBeforeLast('.').replace('_', ' ').replace('-', ' ')
+                                        .replaceFirstChar { it.uppercase() }
+                                }
+                                validationError = null
+                            }
                         }
-                        validationError = null
+                    }.onFailure { e ->
+                        validationError = "Could not read HTML file: ${e.localizedMessage ?: "Error"}"
                     }
                 }
-            } catch (e: Exception) {
-                validationError = "Could not read HTML file: ${e.localizedMessage ?: "Error"}"
             }
         }
     }

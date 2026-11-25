@@ -1,8 +1,5 @@
 package com.example.ui.screens
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -26,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.DarkMode
@@ -34,17 +32,19 @@ import androidx.compose.material.icons.rounded.HourglassEmpty
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.OfflinePin
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Quiz
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -64,7 +64,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -73,9 +72,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.DownloadedMcqPack
+import com.example.data.LocalStudyCache
 import com.example.data.McqQuestion
 import com.example.data.MedPrepConstants
-import com.example.data.PdfMcqExporter
 import com.example.data.PlanEntitlements
 import com.example.data.QuestionAttempt
 import com.example.data.StudyMode
@@ -95,6 +94,9 @@ fun DashboardScreen(
     publishedState: UiState<List<McqQuestion>>,
     attemptsMap: Map<String, QuestionAttempt>,
     downloadedPacks: List<DownloadedMcqPack>,
+    offlineStudyCache: LocalStudyCache?,
+    localStorageKb: Long,
+    isOfflineFallbackActive: Boolean,
     isDarkTheme: Boolean,
     isSyncing: Boolean,
     onToggleTheme: () -> Unit,
@@ -102,16 +104,17 @@ fun DashboardScreen(
     onStartStudy: (StudyMode, String?, Int) -> Unit,
     onStartCustomQuiz: (String, List<McqQuestion>) -> Unit,
     onSaveOfflinePack: (String, String, List<McqQuestion>) -> Unit,
+    onSaveOfflineSnapshot: () -> Unit,
     onOpenMoreTab: (MoreMenuTab) -> Unit,
+    onSignOut: () -> Unit,
     onPostMessage: (String) -> Unit
 ) {
-    val context = LocalContext.current
     val extendedColors = LocalMedPrepColors.current
     val profile = (profileState as? UiState.Success)?.data
     val activePlan = SubscriptionPlanTier.fromKey(profile?.subscriptionPlan)
     val maxPracticeCap = PlanEntitlements.maxPracticeQuestionsPerSession(activePlan)
+    val maxOfflinePackCap = PlanEntitlements.maxOfflinePackMcqs(activePlan)
     val canTimedExam = PlanEntitlements.canUseTimedExam(activePlan)
-    val canDownloadPdfAndPacks = PlanEntitlements.canDownloadPdfAndOfflinePacks(activePlan)
     // Strictly keep ONLY the 5 core subjects
     val questions = remember(publishedState) {
         (publishedState as? UiState.Success)?.data
@@ -120,27 +123,6 @@ fun DashboardScreen(
     }
 
     var showThreeDotsMenu by remember { mutableStateOf(false) }
-
-    val downloadStudyPdfLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/pdf")
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    PdfMcqExporter.writeMcqsPdf(
-                        outputStream = out,
-                        title = "MedPrep — Complete 5-Subject MCQs",
-                        subtitle = "Offline PDF with Answer Keys & Reasons",
-                        questions = questions
-                    )
-                }
-                onSaveOfflinePack("All Subjects Interactive Pack", "All Subjects", questions)
-                onPostMessage("Downloaded ${questions.size} MCQs as PDF + Interactive Offline Pack!")
-            } catch (e: Exception) {
-                onPostMessage("PDF download failed: ${e.localizedMessage ?: "Error"}")
-            }
-        }
-    }
 
     val greeting = remember {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
@@ -342,6 +324,28 @@ fun DashboardScreen(
                                                     modifier = Modifier.testTag("menu_item_${tab.id}")
                                                 )
                                             }
+                                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        text = "Logout",
+                                                        color = MaterialTheme.colorScheme.error,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        imageVector = Icons.AutoMirrored.Rounded.Logout,
+                                                        contentDescription = "Logout",
+                                                        tint = MaterialTheme.colorScheme.error
+                                                    )
+                                                },
+                                                onClick = {
+                                                    showThreeDotsMenu = false
+                                                    onSignOut()
+                                                },
+                                                modifier = Modifier.testTag("menu_item_logout")
+                                            )
                                         }
                                     }
                                 }
@@ -530,56 +534,116 @@ fun DashboardScreen(
                             }
                         }
 
-                        // Download MCQs as PDF + Interactive Offline Mode Card (Basic Plan+)
+                        // In-App Offline Mobile Storage Card (No External File Downloads — Study Offline Anytime)
                         item {
+                            val cachedMcqCount = offlineStudyCache?.questions?.size ?: 0
+                            val cachedCourseCount = offlineStudyCache?.courses?.size ?: 0
+                            val cachedPostCount = offlineStudyCache?.posts?.size ?: 0
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
-                                    onClick = {
-                                        if (canDownloadPdfAndPacks) {
-                                            downloadStudyPdfLauncher.launch("MedPrep_MCQs_Study_Sheet.pdf")
-                                        } else {
-                                            onPostMessage("PDF & Interactive Offline MCQ Packs require Basic Plan (PKR 499/mo).")
-                                            onOpenMoreTab(MoreMenuTab.PLANS)
-                                        }
-                                    },
-                                    shape = MaterialTheme.shapes.medium,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(48.dp)
-                                        .testTag("dashboard_download_mcqs_button")
+                                Card(
+                                    shape = MaterialTheme.shapes.large,
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                    ),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Icon(
-                                        imageVector = if (canDownloadPdfAndPacks) Icons.Rounded.PictureAsPdf else Icons.Rounded.Lock,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = if (canDownloadPdfAndPacks) {
-                                            "Download ${questions.size} MCQs as PDF + Interactive Pack"
-                                        } else {
-                                            "Unlock PDF & Offline Pack (Basic Plan • PKR 499/mo)"
+                                    Column(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(38.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(extendedColors.successContainer),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.OfflinePin,
+                                                    contentDescription = "Offline Study Storage",
+                                                    tint = extendedColors.onSuccessContainer,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Offline Study Storage (In-App)",
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    if (isOfflineFallbackActive) {
+                                                        Surface(
+                                                            color = extendedColors.warningContainer,
+                                                            shape = RoundedCornerShape(50)
+                                                        ) {
+                                                            Text(
+                                                                text = "Offline Mode",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = extendedColors.onWarningContainer,
+                                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                Text(
+                                                    text = if (cachedMcqCount > 0 || cachedCourseCount > 0 || cachedPostCount > 0) {
+                                                        "$cachedMcqCount MCQs • $cachedCourseCount Courses • $cachedPostCount Lessons saved on device (${localStorageKb} KB)"
+                                                    } else {
+                                                        "Study data auto-saves privately inside your phone storage so you can keep studying without internet."
+                                                    },
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
                                         }
-                                    )
+
+                                        OutlinedButton(
+                                            onClick = {
+                                                onSaveOfflineSnapshot()
+                                                if (questions.isNotEmpty()) {
+                                                    onSaveOfflinePack(
+                                                        "Offline Study Pack (All Subjects)",
+                                                        "All Subjects",
+                                                        questions.take(maxOfflinePackCap)
+                                                    )
+                                                }
+                                            },
+                                            shape = MaterialTheme.shapes.medium,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(46.dp)
+                                                .testTag("dashboard_save_offline_storage_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.SaveAlt,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Save Study Data to Mobile Storage (Offline)")
+                                        }
+                                    }
                                 }
 
                                 val latestPack = downloadedPacks.firstOrNull()
                                 if (latestPack != null) {
                                     Surface(
-                                        onClick = {
-                                            if (canDownloadPdfAndPacks) {
-                                                onStartCustomQuiz(latestPack.title, latestPack.questions)
-                                            } else {
-                                                onPostMessage("Interactive Offline Packs require Basic Plan (PKR 499/mo).")
-                                                onOpenMoreTab(MoreMenuTab.PLANS)
-                                            }
-                                        },
+                                        onClick = { onStartCustomQuiz(latestPack.title, latestPack.questions) },
                                         shape = MaterialTheme.shapes.medium,
                                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
                                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .testTag("dashboard_run_downloaded_pack_button")
+                                            .testTag("dashboard_run_offline_pack_button")
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -587,22 +651,18 @@ fun DashboardScreen(
                                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                                         ) {
                                             Icon(
-                                                imageVector = if (canDownloadPdfAndPacks) Icons.Rounded.PlayArrow else Icons.Rounded.Lock,
+                                                imageVector = Icons.Rounded.PlayArrow,
                                                 contentDescription = null,
                                                 tint = MaterialTheme.colorScheme.primary
                                             )
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
-                                                    text = if (canDownloadPdfAndPacks) {
-                                                        "Run Downloaded MCQs Interactively"
-                                                    } else {
-                                                        "Offline Pack Locked (Basic Plan)"
-                                                    },
+                                                    text = "Continue Offline Study Pack",
                                                     style = MaterialTheme.typography.labelLarge,
                                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                                 )
                                                 Text(
-                                                    text = "${latestPack.title} (${latestPack.questions.size} MCQs offline-ready)",
+                                                    text = "${latestPack.title} (${latestPack.questions.size} MCQs saved on phone)",
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                                                 )

@@ -141,6 +141,7 @@ object ThemePreferences {
     private const val KEY_NOTIF_HOUR = "notif_reminder_hour"
     private const val KEY_ENTRY_MODE = "app_entry_mode"
     private const val KEY_PENDING_ACCESS_KEY = "pending_access_key"
+    private const val KEY_ACTIVE_STUDENT_SESSION_UID = "active_student_session_uid"
 
     fun loadEntryMode(context: Context): AppEntryMode {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -160,6 +161,16 @@ object ThemePreferences {
     fun savePendingAccessKey(context: Context, keyCode: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(KEY_PENDING_ACCESS_KEY, keyCode.trim().uppercase()).apply()
+    }
+
+    fun loadActiveStudentSessionUid(context: Context): String {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_ACTIVE_STUDENT_SESSION_UID, "").orEmpty()
+    }
+
+    fun saveActiveStudentSessionUid(context: Context, uid: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_ACTIVE_STUDENT_SESSION_UID, uid.trim()).apply()
     }
 
     fun loadThemeMode(context: Context): AppThemeMode {

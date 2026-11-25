@@ -9,20 +9,20 @@
 
     <!-- Auth -->
     <string name="auth_headline">MDCAT &amp; Pre-Med\nMCQ Mastery</string>
-    <string name="auth_subtitle">Master Biology, Chemistry, Physics, English &amp; Logical Reasoning with shuffled options, reasons, YouTube videos &amp; offline downloads.</string>
+    <string name="auth_subtitle">Master Biology, Chemistry, Physics, English &amp; Logical Reasoning with Free email login, shuffled options, reasons, and offline mobile storage.</string>
     <string name="auth_sign_in_google">Sign in with Google</string>
     <string name="auth_signing_in">Signing in…</string>
-    <string name="auth_feature_offline_title">Offline Sync &amp; MCQ Download</string>
-    <string name="auth_feature_offline_desc">Sync or download MCQs with Reasons for offline study anywhere.</string>
-    <string name="auth_feature_studio_title">Student-Only Specific Key &amp; Interactive HTML</string>
-    <string name="auth_feature_studio_desc">Students unlock with a specific 1-device Access Key; explore interactive HTML lessons linked to MCQs.</string>
+    <string name="auth_feature_offline_title">Offline Mobile Storage</string>
+    <string name="auth_feature_offline_desc">Study MCQs, courses, and lessons offline using private in-app mobile storage.</string>
+    <string name="auth_feature_studio_title">Free Email Login &amp; Optional Access Key</string>
+    <string name="auth_feature_studio_desc">Start Free immediately with verified email login; optional 1-device Access Key supported anytime.</string>
     <string name="auth_feature_exam_title">Shuffled Retests &amp; Exact Chemistry Formulas</string>
     <string name="auth_feature_exam_desc">Randomized A–D options, instant reasons, and exact chemical structure formatting.</string>
 
     <!-- Access Key Gate -->
     <string name="key_gate_title">Student-Only Access Key Login</string>
-    <string name="key_gate_subtitle">Students must enter their specific Admin-issued Access Key to unlock the Student App. Each key binds permanently to 1 student and 1 device.</string>
-    <string name="key_gate_device_locked_title">Key Locked to Another Device</string>
+    <string name="key_gate_subtitle">Enter your Admin-issued Access Key to unlock the Student App. If your email and key match an older device, it automatically logs out there and logs in here.</string>
+    <string name="key_gate_device_locked_title">Key Active on Another Device</string>
     <string name="key_gate_revoked_title">Access Key Revoked</string>
     <string name="key_gate_activate_button">Activate &amp; Unlock Student App</string>
 
@@ -71,7 +71,7 @@
     <!-- Profile, Theme & Admin Contact -->
     <string name="profile_title">Profile &amp; Settings</string>
     <string name="profile_appearance">Appearance (Theme)</string>
-    <string name="profile_sync_title">Offline Sync &amp; MCQ Downloads</string>
+    <string name="profile_sync_title">Offline Mobile Storage &amp; Sync</string>
     <string name="profile_sync_now">Sync Now</string>
     <string name="profile_syncing">Syncing…</string>
     <string name="profile_exam_track">Target Exam</string>
@@ -79,6 +79,6 @@
     <string name="profile_recent_sessions">Recent Sessions</string>
     <string name="profile_sign_out">Sign Out</string>
     <string name="profile_admin_badge">Admin</string>
-    <string name="profile_admin_contact_title">Admin Support &amp; Contact</string>
-    <string name="profile_admin_email">irfanalichachar862@gmail.com</string>
+    <string name="profile_admin_contact_title">Support &amp; Contact</string>
+    <string name="profile_admin_email">developeremailofsystem@gmail.com</string>
 </resources>

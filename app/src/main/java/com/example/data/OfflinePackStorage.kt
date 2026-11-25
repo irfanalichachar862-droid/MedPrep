@@ -24,6 +24,16 @@ data class DownloadedMcqPack(
     val questions: List<McqQuestion>
 )
 
+data class LocalStudyCache(
+    val cachedAtMillis: Long,
+    val questions: List<McqQuestion>,
+    val courses: List<CourseItem>,
+    val posts: List<StudyPost>
+) {
+    val hasAnyContent: Boolean
+        get() = questions.isNotEmpty() || courses.isNotEmpty() || posts.isNotEmpty()
+}
+
 data class MedPrepBackupPayload(
     val exportedAtMillis: Long,
     val displayName: String?,
@@ -78,8 +88,185 @@ object OfflinePackStorage {
     private fun packsFile(context: Context, uid: String): File =
         File(context.filesDir, "medprep_offline_packs_${safeUid(uid)}.json")
 
+    private fun studyCacheFile(context: Context, uid: String): File =
+        File(context.filesDir, "medprep_offline_study_cache_${safeUid(uid)}.json")
+
     private fun avatarFile(context: Context, uid: String): File =
         File(context.filesDir, "medprep_avatar_${safeUid(uid)}.jpg")
+
+    // --- PRIVATE MOBILE STORAGE OFFLINE STUDY CACHE (MCQS, COURSES, POSTS) ---
+
+    fun getLocalStorageSizeKb(context: Context, uid: String): Long {
+        val totalBytes = listOf(packsFile(context, uid), studyCacheFile(context, uid))
+            .filter { it.exists() }
+            .sumOf { it.length() }
+        return if (totalBytes <= 0L) 0L else ((totalBytes + 1023L) / 1024L)
+    }
+
+    fun loadStudyCache(context: Context, uid: String): LocalStudyCache? {
+        val file = studyCacheFile(context, uid)
+        if (!file.exists()) return null
+        return try {
+            val root = JSONObject(file.readText(Charsets.UTF_8))
+            val cachedAt = root.optLong("cachedAtMillis", file.lastModified())
+
+            val qArr = root.optJSONArray("questions") ?: JSONArray()
+            val questions = mutableListOf<McqQuestion>()
+            for (i in 0 until qArr.length()) {
+                val q = qArr.optJSONObject(i) ?: continue
+                questions.add(
+                    McqQuestion(
+                        id = q.optString("id", "cache_q_$i"),
+                        subject = q.optString("subject", "Biology"),
+                        topic = q.optString("topic", ""),
+                        stem = q.optString("stem", ""),
+                        optionA = q.optString("optionA", ""),
+                        optionB = q.optString("optionB", ""),
+                        optionC = q.optString("optionC", ""),
+                        optionD = q.optString("optionD", ""),
+                        correctOption = q.optString("correctOption", "A"),
+                        explanation = q.optString("explanation", ""),
+                        youtubeUrl = q.optString("youtubeUrl").takeIf { it.isNotBlank() },
+                        linkedPostId = q.optString("linkedPostId").takeIf { it.isNotBlank() },
+                        difficulty = q.optString("difficulty", "medium"),
+                        status = "published"
+                    )
+                )
+            }
+
+            val cArr = root.optJSONArray("courses") ?: JSONArray()
+            val courses = mutableListOf<CourseItem>()
+            for (i in 0 until cArr.length()) {
+                val c = cArr.optJSONObject(i) ?: continue
+                courses.add(
+                    CourseItem(
+                        id = c.optString("id", "cache_c_$i"),
+                        title = c.optString("title", ""),
+                        description = c.optString("description", ""),
+                        subject = c.optString("subject", "Biology"),
+                        instructor = c.optString("instructor", "MedPrep Faculty"),
+                        durationLabel = c.optString("durationLabel", "4 Weeks"),
+                        level = c.optString("level", "intermediate"),
+                        syllabusOutline = c.optString("syllabusOutline", ""),
+                        youtubeUrl = c.optString("youtubeUrl").takeIf { it.isNotBlank() },
+                        webUrl = c.optString("webUrl").takeIf { it.isNotBlank() },
+                        status = "published"
+                    )
+                )
+            }
+
+            val pArr = root.optJSONArray("posts") ?: JSONArray()
+            val posts = mutableListOf<StudyPost>()
+            for (i in 0 until pArr.length()) {
+                val p = pArr.optJSONObject(i) ?: continue
+                posts.add(
+                    StudyPost(
+                        id = p.optString("id", "cache_p_$i"),
+                        title = p.optString("title", ""),
+                        body = p.optString("body", ""),
+                        subject = p.optString("subject", "Biology"),
+                        topic = p.optString("topic", ""),
+                        webUrl = p.optString("webUrl").takeIf { it.isNotBlank() },
+                        youtubeUrl = p.optString("youtubeUrl").takeIf { it.isNotBlank() },
+                        htmlContent = p.optString("htmlContent").takeIf { it.isNotBlank() },
+                        htmlFileName = p.optString("htmlFileName").takeIf { it.isNotBlank() },
+                        courseId = p.optString("courseId").takeIf { it.isNotBlank() },
+                        status = "published"
+                    )
+                )
+            }
+
+            LocalStudyCache(
+                cachedAtMillis = cachedAt,
+                questions = questions,
+                courses = courses,
+                posts = posts
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun saveStudyCache(
+        context: Context,
+        uid: String,
+        questions: List<McqQuestion>,
+        courses: List<CourseItem>,
+        posts: List<StudyPost>
+    ): LocalStudyCache {
+        val cappedQuestions = questions.filter { MedPrepConstants.isCoreSubject(it.subject) }.take(300)
+        val cappedCourses = courses.take(60)
+        val cappedPosts = posts.take(60)
+        val now = System.currentTimeMillis()
+
+        val root = JSONObject().apply {
+            put("cachedAtMillis", now)
+            put("questions", JSONArray().apply {
+                cappedQuestions.forEach { q ->
+                    put(JSONObject().apply {
+                        put("id", q.id)
+                        put("subject", q.subject)
+                        put("topic", q.topic)
+                        put("stem", q.stem)
+                        put("optionA", q.optionA)
+                        put("optionB", q.optionB)
+                        put("optionC", q.optionC)
+                        put("optionD", q.optionD)
+                        put("correctOption", q.correctOption)
+                        put("explanation", q.explanation)
+                        put("youtubeUrl", q.youtubeUrl.orEmpty())
+                        put("linkedPostId", q.linkedPostId.orEmpty())
+                        put("difficulty", q.difficulty)
+                    })
+                }
+            })
+            put("courses", JSONArray().apply {
+                cappedCourses.forEach { c ->
+                    put(JSONObject().apply {
+                        put("id", c.id)
+                        put("title", c.title)
+                        put("description", c.description)
+                        put("subject", c.subject)
+                        put("instructor", c.instructor)
+                        put("durationLabel", c.durationLabel)
+                        put("level", c.level)
+                        put("syllabusOutline", c.syllabusOutline)
+                        put("youtubeUrl", c.youtubeUrl.orEmpty())
+                        put("webUrl", c.webUrl.orEmpty())
+                    })
+                }
+            })
+            put("posts", JSONArray().apply {
+                cappedPosts.forEach { p ->
+                    put(JSONObject().apply {
+                        put("id", p.id)
+                        put("title", p.title)
+                        put("body", p.body)
+                        put("subject", p.subject)
+                        put("topic", p.topic)
+                        put("webUrl", p.webUrl.orEmpty())
+                        put("youtubeUrl", p.youtubeUrl.orEmpty())
+                        put("htmlContent", p.htmlContent?.take(120_000).orEmpty())
+                        put("htmlFileName", p.htmlFileName.orEmpty())
+                        put("courseId", p.courseId.orEmpty())
+                    })
+                }
+            })
+        }
+
+        studyCacheFile(context, uid).writeText(root.toString(), Charsets.UTF_8)
+        return LocalStudyCache(
+            cachedAtMillis = now,
+            questions = cappedQuestions,
+            courses = cappedCourses,
+            posts = cappedPosts
+        )
+    }
+
+    fun clearStudyCache(context: Context, uid: String) {
+        val file = studyCacheFile(context, uid)
+        if (file.exists()) file.delete()
+    }
 
     // --- OFFLINE INTERACTIVE MCQ PACKS ---
 
@@ -144,8 +331,20 @@ object OfflinePackStorage {
 
     fun saveUserAvatarFromUri(context: Context, uid: String, uri: Uri): Bitmap? {
         return try {
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, boundsOpts)
+            }
+            var sampleSize = 1
+            val rawMin = minOf(boundsOpts.outWidth, boundsOpts.outHeight)
+            if (rawMin > 0) {
+                while ((rawMin / (sampleSize * 2)) >= MAX_AVATAR_PX) {
+                    sampleSize *= 2
+                }
+            }
+            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
             val decoded = context.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream)
+                BitmapFactory.decodeStream(stream, null, decodeOpts)
             } ?: return null
 
             val minDim = minOf(decoded.width, decoded.height).coerceAtLeast(1)
@@ -158,7 +357,7 @@ object OfflinePackStorage {
             FileOutputStream(outFile).use { fos ->
                 scaled.compress(Bitmap.CompressFormat.JPEG, 86, fos)
             }
-            if (square !== decoded) square.recycle()
+            if (square !== decoded && square !== scaled) square.recycle()
             if (decoded !== scaled) decoded.recycle()
             scaled
         } catch (_: Exception) {

@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Help
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.BookmarkAdded
@@ -51,8 +52,8 @@ import com.example.data.AccessKey
 import com.example.data.DifficultQuestionDraft
 import com.example.data.DifficultQuestionItem
 import com.example.data.DownloadedMcqPack
+import com.example.data.LocalStudyCache
 import com.example.data.McqQuestion
-import com.example.data.MedPrepBackupPayload
 import com.example.data.QuestionAttempt
 import com.example.data.StudyMode
 import com.example.data.StudyNote
@@ -79,7 +80,7 @@ enum class MoreMenuTab(
     PROGRESS("progress", "Progress", Icons.Rounded.Timeline, Icons.Outlined.Timeline, "hub_tab_progress"),
     HIGHLIGHTS_NOTES("notes", "Highlights & Notes", Icons.Rounded.BookmarkAdded, Icons.Outlined.BookmarkAdded, "hub_tab_notes"),
     DIFFICULT("difficult", "Difficult Qs", Icons.Rounded.PriorityHigh, Icons.Outlined.PriorityHigh, "hub_tab_difficult"),
-    SETTINGS_BACKUP("settings", "Settings & Backup", Icons.Rounded.Backup, Icons.Outlined.Backup, "hub_tab_settings"),
+    SETTINGS_BACKUP("settings", "Settings & Storage", Icons.Rounded.Backup, Icons.Outlined.Backup, "hub_tab_settings"),
     APP_GUIDE("guide", "App Guide", Icons.AutoMirrored.Rounded.Help, Icons.AutoMirrored.Outlined.HelpOutline, "hub_tab_guide")
 }
 
@@ -94,6 +95,8 @@ fun MoreMenuHubScreen(
     studyNotes: List<StudyNote>,
     difficultQuestions: List<DifficultQuestionItem>,
     downloadedPacks: List<DownloadedMcqPack>,
+    offlineStudyCache: LocalStudyCache?,
+    localStorageKb: Long,
     userSubscriptionRequests: List<SubscriptionRequest>,
     activeAccessKey: AccessKey?,
     deviceId: String,
@@ -107,6 +110,7 @@ fun MoreMenuHubScreen(
     onUpdateAppearance: (AppAppearanceConfig) -> Unit,
     onUpdateFunctionalSettings: (AppFunctionalSettings) -> Unit,
     onSaveFullProfile: (String, String, Long, String?, String?, Long?) -> Unit,
+    onActivateOptionalKey: (String) -> Unit,
     onSubmitPaymentRequest: (SubscriptionPlanTier, String, String, String, String, () -> Unit) -> Unit,
     onCancelPendingRequest: (String) -> Unit,
     onSaveScheduleDays: (Long) -> Unit,
@@ -114,11 +118,12 @@ fun MoreMenuHubScreen(
     onStartCustomQuiz: (String, List<McqQuestion>) -> Unit,
     onSaveOfflinePack: (String, String, List<McqQuestion>) -> Unit,
     onDeleteOfflinePack: (String) -> Unit,
+    onSaveOfflineSnapshotNow: () -> Unit,
+    onClearOfflineCache: () -> Unit,
     onSaveNote: (StudyNoteDraft, () -> Unit) -> Unit,
     onDeleteNote: (String) -> Unit,
     onSaveDifficultQuestion: (DifficultQuestionDraft, () -> Unit) -> Unit,
     onDeleteDifficultQuestion: (String) -> Unit,
-    onImportBackup: (MedPrepBackupPayload) -> Unit,
     onSyncNow: () -> Unit,
     onOpenAdminPanel: (() -> Unit)?,
     onSignOut: () -> Unit,
@@ -140,7 +145,13 @@ fun MoreMenuHubScreen(
                 unselectedIcon = tab.unselectedIcon,
                 testTag = tab.testTag
             )
-        }
+        } + LiquidGlassTabItem(
+            id = "logout",
+            label = "Logout",
+            selectedIcon = Icons.AutoMirrored.Rounded.Logout,
+            unselectedIcon = Icons.AutoMirrored.Rounded.Logout,
+            testTag = "hub_tab_logout"
+        )
     }
 
     Scaffold(
@@ -174,6 +185,18 @@ fun MoreMenuHubScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                },
+                actions = {
+                    IconButton(
+                        onClick = onSignOut,
+                        modifier = Modifier.testTag("more_hub_logout_action")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.Logout,
+                            contentDescription = "Logout",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             )
         }
@@ -194,7 +217,11 @@ fun MoreMenuHubScreen(
                     items = tabItems,
                     selectedId = selectedTab.id,
                     onSelect = { id ->
-                        selectedTab = MoreMenuTab.entries.firstOrNull { it.id == id } ?: MoreMenuTab.PROFILE
+                        if (id == "logout") {
+                            onSignOut()
+                        } else {
+                            selectedTab = MoreMenuTab.entries.firstOrNull { it.id == id } ?: MoreMenuTab.PROFILE
+                        }
                     },
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
                 )
@@ -209,6 +236,7 @@ fun MoreMenuHubScreen(
                             isAdminUser = isAdminUser,
                             isMutating = isMutating,
                             onSaveFullProfile = onSaveFullProfile,
+                            onActivateOptionalKey = onActivateOptionalKey,
                             onJumpToPlans = { selectedTab = MoreMenuTab.PLANS },
                             onPostMessage = onPostMessage
                         )
@@ -279,20 +307,18 @@ fun MoreMenuHubScreen(
                         )
 
                         MoreMenuTab.SETTINGS_BACKUP -> SettingsBackupTabContent(
-                            activePlan = activePlan,
-                            profile = profile,
-                            appearance = appearanceConfig,
                             settings = functionalSettings,
                             studyNotes = studyNotes,
                             difficultQuestions = difficultQuestions,
                             downloadedPacks = downloadedPacks,
+                            offlineStudyCache = offlineStudyCache,
+                            localStorageKb = localStorageKb,
                             isAdminUser = isAdminUser,
                             isSyncing = isSyncing,
-                            isMutating = isMutating,
                             onUpdateSettings = onUpdateFunctionalSettings,
                             onSyncNow = onSyncNow,
-                            onImportBackup = onImportBackup,
-                            onUpgradeToAdvance = { selectedTab = MoreMenuTab.PLANS },
+                            onSaveOfflineSnapshotNow = onSaveOfflineSnapshotNow,
+                            onClearOfflineCache = onClearOfflineCache,
                             onOpenAdminPanel = onOpenAdminPanel,
                             onSignOut = onSignOut,
                             onPostMessage = onPostMessage

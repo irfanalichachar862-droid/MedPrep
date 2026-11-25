@@ -21,9 +21,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Login
 import androidx.compose.material.icons.rounded.AdminPanelSettings
+import androidx.compose.material.icons.rounded.Email
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.LocalHospital
 import androidx.compose.material.icons.rounded.School
@@ -65,6 +69,8 @@ import com.example.ui.theme.LocalMedPrepColors
 
 @Composable
 fun AuthScreen(
+    forcedLogoutNotice: String? = null,
+    onDismissForcedLogoutNotice: () -> Unit = {},
     onSelectEntryMode: (AppEntryMode, String) -> Unit,
     onAuthSuccess: () -> Unit
 ) {
@@ -74,11 +80,13 @@ fun AuthScreen(
 
     var selectedTab by rememberSaveable { mutableStateOf(AppEntryMode.STUDENT_KEY) }
     var studentKeyInput by rememberSaveable { mutableStateOf("") }
+    var showOptionalKeyField by rememberSaveable { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     fun triggerGoogleSignIn(mode: AppEntryMode, keyCode: String = "") {
         errorMessage = null
+        onDismissForcedLogoutNotice()
         isLoading = true
         onSelectEntryMode(mode, keyCode.trim().uppercase())
         val credentialManager = CredentialManager.create(context)
@@ -176,7 +184,7 @@ fun AuthScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Choose Student Key Login or Admin Portal below to continue.",
+                    text = "Sign in with your verified email to start Free immediately — Access Key is optional.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.88f)
                 )
@@ -205,7 +213,7 @@ fun AuthScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         PortalModePill(
-                            label = "Student (Key)",
+                            label = "Student Login",
                             icon = Icons.Rounded.School,
                             selected = selectedTab == AppEntryMode.STUDENT_KEY,
                             testTag = "auth_mode_student_key",
@@ -228,6 +236,24 @@ fun AuthScreen(
                         )
                     }
 
+                    if (!forcedLogoutNotice.isNullOrBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("auth_forced_logout_notice")
+                        ) {
+                            Text(
+                                text = forcedLogoutNotice,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
+
                     if (errorMessage != null) {
                         Surface(
                             color = MaterialTheme.colorScheme.errorContainer,
@@ -244,7 +270,7 @@ fun AuthScreen(
                     }
 
                     if (selectedTab == AppEntryMode.STUDENT_KEY) {
-                        // STUDENT LOGIN WITH SPECIFIC 1-DEVICE ACCESS KEY
+                        // STUDENT EMAIL LOGIN (FREE ACCESS) + OPTIONAL ACCESS KEY
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -258,7 +284,7 @@ fun AuthScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Rounded.VpnKey,
+                                        imageVector = Icons.Rounded.Email,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.size(20.dp)
@@ -266,40 +292,23 @@ fun AuthScreen(
                                 }
                                 Column {
                                     Text(
-                                        text = "Student Login (Only Access Key)",
+                                        text = "Student Login (Free Starter Access)",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "Enter your Admin-issued 1-device key to open the Student App directly.",
+                                        text = "Sign in with your verified Google email to access Free MCQs & offline study storage immediately. Access Key is optional.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
 
-                            OutlinedTextField(
-                                value = studentKeyInput,
-                                onValueChange = {
-                                    studentKeyInput = it.uppercase()
-                                        .filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
-                                        .take(40)
-                                    if (errorMessage != null) errorMessage = null
-                                },
-                                label = { Text("Student Access Key") },
-                                placeholder = { Text("e.g. ALI-MDCAT-2026 or MED-XXXX-XXXX") },
-                                leadingIcon = { Icon(Icons.Rounded.Key, contentDescription = null) },
-                                singleLine = true,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("auth_student_key_input")
-                            )
-
                             Button(
                                 onClick = {
                                     val cleanKey = studentKeyInput.trim().uppercase()
-                                    if (cleanKey.length < 6) {
-                                        errorMessage = "Please enter your valid Access Key (at least 6 characters)."
+                                    if (showOptionalKeyField && cleanKey.isNotEmpty() && cleanKey.length < 6) {
+                                        errorMessage = "Optional Access Key must be at least 6 characters (or leave it empty to start Free)."
                                     } else {
                                         triggerGoogleSignIn(AppEntryMode.STUDENT_KEY, cleanKey)
                                     }
@@ -313,7 +322,7 @@ fun AuthScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp)
-                                    .testTag("student_key_login_button")
+                                    .testTag("student_google_sign_in_button")
                             ) {
                                 if (isLoading) {
                                     CircularProgressIndicator(
@@ -322,26 +331,85 @@ fun AuthScreen(
                                         strokeWidth = 2.dp
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
-                                    Text("Verifying Key & Signing In…")
+                                    Text("Verifying Email & Signing In…")
                                 } else {
-                                    Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(20.dp))
+                                    Icon(
+                                        imageVector = if (studentKeyInput.isNotBlank()) Icons.Rounded.VpnKey else Icons.AutoMirrored.Rounded.Login,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Unlock & Login with Key", style = MaterialTheme.typography.labelLarge)
+                                    Text(
+                                        text = if (studentKeyInput.isNotBlank()) {
+                                            "Continue with Email & Apply Key"
+                                        } else {
+                                            "Continue with Email (Start Free)"
+                                        },
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
                                 }
                             }
 
-                            OutlinedButton(
-                                onClick = { triggerGoogleSignIn(AppEntryMode.STUDENT_KEY, "") },
-                                enabled = !isLoading,
+                            // Optional Access Key Collapsible Section
+                            Surface(
+                                onClick = { showOptionalKeyField = !showOptionalKeyField },
                                 shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(48.dp)
-                                    .testTag("student_google_sign_in_button")
+                                    .testTag("auth_toggle_optional_key_button")
                             ) {
-                                Icon(Icons.AutoMirrored.Rounded.Login, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Already Activated? Sign In as Student")
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Key,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = "Have an Access Key? (Optional)",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(
+                                        imageVector = if (showOptionalKeyField) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                        contentDescription = "Toggle optional access key",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            AnimatedVisibility(visible = showOptionalKeyField) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = studentKeyInput,
+                                        onValueChange = {
+                                            studentKeyInput = it.uppercase()
+                                                .filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                                                .take(40)
+                                            if (errorMessage != null) errorMessage = null
+                                        },
+                                        label = { Text("Student Access Key (Optional)") },
+                                        placeholder = { Text("e.g. ALI-MDCAT-2026 or leave blank") },
+                                        leadingIcon = { Icon(Icons.Rounded.Key, contentDescription = null) },
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("auth_student_key_input")
+                                    )
+                                    Text(
+                                        text = "If your email & Access Key match an older device, it will automatically log out there and transfer here.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -366,7 +434,7 @@ fun AuthScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = MedPrepConstants.BOOTSTRAP_ADMIN_EMAIL,
+                                        text = "Authorized Admin Account",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -412,9 +480,14 @@ fun AuthScreen(
             }
 
             Text(
-                text = "1-Device Key Lock • 5 Core Medical Subjects • Offline PDF & Interactive Packs",
+                text = "Free Email Login • Optional Key • 5 Core Subjects • Offline Mobile Storage",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "Support: ${MedPrepConstants.SUPPORT_EMAIL}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
             )
         }
     }

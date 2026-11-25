@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Quiz
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,7 +39,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -242,14 +248,29 @@ fun InteractiveLessonViewerScreen(
                     }
                 }
             } else {
-                SandboxedHtmlWebView(
-                    htmlDocument = preparedHtml,
-                    isDarkTheme = isDarkTheme,
-                    onExternalHttpUrl = { url -> openExternalLink(context, url, onPostMessage) },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("interactive_html_webview")
-                )
+                var webViewReady by remember(post.id) { mutableStateOf(false) }
+                LaunchedEffect(post.id) {
+                    withFrameNanos { }
+                    withFrameNanos { }
+                    webViewReady = true
+                }
+                if (webViewReady) {
+                    SandboxedHtmlWebView(
+                        htmlDocument = preparedHtml,
+                        isDarkTheme = isDarkTheme,
+                        onExternalHttpUrl = { url -> openExternalLink(context, url, onPostMessage) },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("interactive_html_webview")
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(strokeWidth = 2.5.dp)
+                    }
+                }
             }
         }
     }
@@ -326,6 +347,11 @@ private fun SandboxedHtmlWebView(
                     null
                 )
             }
+        },
+        onRelease = { webView ->
+            webView.stopLoading()
+            webView.loadUrl("about:blank")
+            webView.destroy()
         }
     )
 }
